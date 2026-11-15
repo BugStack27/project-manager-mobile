@@ -128,7 +128,8 @@ fun AppRoot(
                             true
                         }
                     },
-                    onToggleNotifications = vm::setNotificationsEnabled
+                    onToggleNotifications = vm::setNotificationsEnabled,
+                    onTestAlert = vm::testAlert
                 )
             }
             composable("connections/{connId}") { entry ->

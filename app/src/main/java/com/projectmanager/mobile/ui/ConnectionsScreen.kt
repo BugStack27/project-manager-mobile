@@ -68,17 +68,20 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import com.projectmanager.mobile.BuildConfig
+import com.projectmanager.mobile.PmApp
 import com.projectmanager.mobile.core.ConnectInfo
 import com.projectmanager.mobile.core.Protocol
 import com.projectmanager.mobile.data.ConnectionRecord
 import com.projectmanager.mobile.data.ConnectionRuntime
+import com.projectmanager.mobile.notify.Notifier
 
 @Composable
 fun ConnectionsScreen(
     state: UiState,
     onOpenConnection: (String) -> Unit,
     onAdd: (ConnectInfo, String) -> Boolean,
-    onToggleNotifications: (Boolean) -> Unit
+    onToggleNotifications: (Boolean) -> Unit,
+    onTestAlert: () -> Unit
 ) {
     val context = LocalContext.current
 
@@ -89,6 +92,7 @@ fun ConnectionsScreen(
     var notificationsAllowed by remember {
         mutableStateOf(NotificationManagerCompat.from(context).areNotificationsEnabled())
     }
+    var alertMuted by remember { mutableStateOf(isAlertChannelMuted(context)) }
     var ignoringBattery by remember {
         mutableStateOf(isIgnoringBatteryOptimizations(context))
     }
@@ -98,6 +102,7 @@ fun ConnectionsScreen(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 notificationsAllowed = NotificationManagerCompat.from(context).areNotificationsEnabled()
+                alertMuted = isAlertChannelMuted(context)
                 ignoringBattery = isIgnoringBatteryOptimizations(context)
             }
         }
@@ -313,6 +318,31 @@ fun ConnectionsScreen(
                         )
                     }
                 )
+            }
+            item {
+                SettingRow(
+                    title = "试听提醒",
+                    subtitle = "确认铃声与震动是否正常",
+                    trailing = {
+                        Text(
+                            "试听",
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    },
+                    onClick = onTestAlert
+                )
+            }
+            if (alertMuted && notificationsAllowed) {
+                item {
+                    NoticeCard(
+                        title = "提醒被系统静音",
+                        body = "「待审核与提问」渠道的铃声或震动被关掉了，收到待办时只有通知没有提醒。",
+                        action = "去设置",
+                        onAction = { openAlertChannelSettings(context) }
+                    )
+                }
             }
 
             item { GroupTitle("后台接收") }
@@ -661,6 +691,35 @@ private fun ManualConnectDialog(
 private fun isIgnoringBatteryOptimizations(context: android.content.Context): Boolean {
     val power = context.getSystemService(PowerManager::class.java) ?: return false
     return power.isIgnoringBatteryOptimizations(context.packageName)
+}
+
+/** 「待审核与提问」渠道整体被关闭，或铃声与震动都被关掉。 */
+private fun isAlertChannelMuted(context: android.content.Context): Boolean =
+    (context.applicationContext as? PmApp)?.container?.notifier?.isAlertChannelMuted() ?: false
+
+private fun openAlertChannelSettings(context: android.content.Context) {
+    try {
+        context.startActivity(
+            Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                .putExtra(Settings.EXTRA_CHANNEL_ID, Notifier.TODO_CHANNEL)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+    } catch (_: ActivityNotFoundException) {
+        openAppNotificationSettings(context)
+    } catch (_: Exception) {
+    }
+}
+
+private fun openAppNotificationSettings(context: android.content.Context) {
+    try {
+        context.startActivity(
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+    } catch (_: Exception) {
+    }
 }
 
 private fun requestIgnoreBattery(context: android.content.Context) {

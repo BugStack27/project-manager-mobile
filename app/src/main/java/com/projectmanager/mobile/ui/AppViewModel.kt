@@ -99,6 +99,16 @@ class AppViewModel(private val app: PmApp) : ViewModel() {
         repo.updateSettings { it.copy(batteryPromptShown = true) }
     }
 
+    /** 发出与真实待办同渠道的通知，用于当场确认铃声与震动。 */
+    fun testAlert() {
+        notifier.ensureChannels()
+        val sent = notifier.notifyTest()
+        notify(
+            if (sent) "已发送试听提醒：应有一次响铃与震动" else "通知权限未开启，无法试听",
+            error = !sent
+        )
+    }
+
     fun answer(item: PendingItem, decision: String, text: String, onResult: (Boolean) -> Unit) {
         viewModelScope.launch {
             try {

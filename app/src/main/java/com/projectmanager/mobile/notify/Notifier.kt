@@ -6,7 +6,11 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.RingtoneManager
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -45,9 +49,47 @@ class Notifier(
             NotificationManager.IMPORTANCE_HIGH
         ).apply {
             description = "桌面端有交付等待审核，或 agent 在等你回答"
+            // 铃声与震动必须写在渠道上：Android 8 起通知的声音 / 震动由渠道决定，Builder 上的设置会被忽略
+            setSound(alertSound(), alertAudioAttributes())
             enableVibration(true)
+            vibrationPattern = TODO_VIBRATION_PATTERN
+            setShowBadge(true)
+            lockscreenVisibility = Notification.VISIBILITY_PUBLIC
         }
         nm.createNotificationChannels(listOf(service, todo))
+        // 旧渠道是无声的；已创建的渠道不允许再改铃声 / 震动，只能删掉旧渠道让新渠道生效
+        runCatching { nm.deleteNotificationChannel(LEGACY_TODO_CHANNEL) }
+    }
+
+    /** 试听提醒：用与真实待办完全相同的渠道发一条通知，方便用户当场确认铃声与震动。 */
+    fun notifyTest(): Boolean {
+        if (!manager.areNotificationsEnabled()) return false
+        val notification = NotificationCompat.Builder(context, TODO_CHANNEL)
+            .setSmallIcon(R.drawable.ic_stat_todo)
+            .setContentTitle("提醒试听")
+            .setContentText("收到新的待审核 / 待回答时，会这样响铃并震动")
+            .setStyle(NotificationCompat.BigTextStyle().bigText("收到新的待审核 / 待回答时，会这样响铃并震动。\n\n如果没有声音或震动，请检查系统「勿扰 / 静音」模式与「待审核与提问」通知渠道。"))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setAutoCancel(true)
+            .setContentIntent(openAppIntent(TEST_ID))
+            .build()
+        return try {
+            manager.notify(TEST_ID, notification)
+            true
+        } catch (e: SecurityException) {
+            Log.w("Notifier", "通知权限缺失", e)
+            false
+        }
+    }
+
+    /** 渠道被系统关掉铃声与震动（或整个渠道被关闭）时，提醒用户去系统设置里恢复。 */
+    fun isAlertChannelMuted(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+        val nm = context.getSystemService(NotificationManager::class.java) ?: return false
+        val channel = nm.getNotificationChannel(TODO_CHANNEL) ?: return false
+        if (channel.importance == NotificationManager.IMPORTANCE_NONE) return true
+        return channel.sound == null && !channel.shouldVibrate()
     }
 
     fun serviceNotification(text: String): Notification =
@@ -154,6 +196,16 @@ class Notifier(
 
     fun areNotificationsEnabled(): Boolean = manager.areNotificationsEnabled()
 
+    private fun alertSound(): Uri =
+        RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            ?: Settings.System.DEFAULT_NOTIFICATION_URI
+
+    private fun alertAudioAttributes(): AudioAttributes =
+        AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .build()
+
     private fun notificationId(item: PendingItem): Int {
         val id = item.key.hashCode() and 0x7fffffff
         return if (id == SUMMARY_ID) id + 1 else id
@@ -188,9 +240,15 @@ class Notifier(
 
     companion object {
         const val SERVICE_CHANNEL = "service_state"
-        const val TODO_CHANNEL = "todo_alerts"
+        /** v2：v1 渠道在部分机型上被建成无声渠道，且已创建渠道无法改写铃声，故换新 id */
+        const val TODO_CHANNEL = "todo_alerts_v2"
+        const val LEGACY_TODO_CHANNEL = "todo_alerts"
         const val GROUP_TODO = "pm_todo"
         const val SERVICE_NOTIFICATION_ID = 1001
         const val SUMMARY_ID = 1000
+        const val TEST_ID = 1002
+
+        /** 响铃后连续两次「震 400ms、停 200ms」，避免只震一下被忽略 */
+        private val TODO_VIBRATION_PATTERN = longArrayOf(0, 400, 200, 400)
     }
 }

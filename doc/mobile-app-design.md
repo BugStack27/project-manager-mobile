@@ -236,6 +236,14 @@ description: 项目管理台手机端（Android + Compose，多桌面端连接�
 - 新增 `README.md`、`tools/mobile-peer.mjs`；`doc/mobile-app-design.md` 更新为设计 + 实现记录。
 - 测试桩支持指定 `--topic/--key` 复用连接、推送审核 / 提问、打印手机回传答案，便于后续联调。
 
+### 5. PushGo Pull 后台接收（2026-11-15）✅
+
+- 现象：桌面端已提交消息，手机端没有通知，打开 App 才看到待办。
+- 根因 1：Pull 轮询靠 15 秒定时器推进，息屏后系统挂起 CPU、定时器停摆（模拟器实测：息屏 150 秒内应用 0 个网络包），消息只能等点亮屏幕 / 打开 App 才被拉走。
+- 根因 2：前台服务在 `Application.onCreate` 里启动，进程在后台重建时被系统拒绝（`ForegroundServiceStartNotAllowedException`），服务起不来。
+- 实现：`service/MobileLinkService.kt` 在服务存活期间持有 `PARTIAL_WAKE_LOCK`（`pm-mobile:link`），销毁时释放；`MainActivity.onStart` 在前台拉起服务，`PmApp.onCreate` 不再尝试后台启动；`AndroidManifest.xml` 增加 `WAKE_LOCK` 权限。
+- 验证：`assembleDebug`、`testDebugUnitTest` 通过；模拟器 API 35 冷启动日志 `Background started FGS: Allowed ... uidState: TOP`，息屏后 120 秒仍有 30 个收包（修复前 150 秒 0 个），force-stop 后唤醒锁正常释放；真实桌面端投递通知未在本轮复测。
+
 ### 已知限制
 
 - 被用户「强行停止」后系统不会自动恢复服务（Android 限制）。

@@ -20,9 +20,6 @@ class PmApp : Application() {
         super.onCreate()
         container = AppContainer(this)
         container.notifier.ensureChannels()
-        if (container.repo.connections.isNotEmpty()) {
-            startLinkService()
-        }
     }
 
     fun startLinkService() {

@@ -47,6 +47,8 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - 前台服务类型为 `remoteMessaging`：语义是接收配对设备的消息，允许开机后恢复，也不受 Android 15 `dataSync` 6 小时上限影响。
 - `targetSdk = 34`：避免 Android 15 对 `dataSync` 的额外限制；`compileSdk = 35`。
 - `START_STICKY` + 网络回调立即重连；服务通知常驻，退出应用不停止。
+- 前台服务持有部分唤醒锁（`pm-mobile:link`）：PushGo 靠 15 秒定时器 Pull，息屏后系统挂起 CPU 会让轮询停摆，待办要等点亮屏幕才被拉走；唤醒锁保证息屏后仍能按时拉取，代价是待机耗电略增。
+- 服务改为在 Activity 前台时拉起：Android 12+ 禁止从后台启动前台服务，`Application.onCreate` 里启动会被拒（`ForegroundServiceStartNotAllowedException`），进程重建后服务就起不来。
 - 开机广播在用户首次解锁后触发；若系统拦截后台启动，App 下次打开会再次拉起服务。
 - 被用户「强行停止」后系统不会自动恢复，这是 Android 的限制。
 

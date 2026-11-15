@@ -46,6 +46,19 @@ class MainActivity : ComponentActivity() {
         handleIntent(intent)
     }
 
+    /**
+     * 前台服务只能在前台启动：在 Application.onCreate 里启动会被系统以
+     * ForegroundServiceStartNotAllowedException 拒绝，进程重建后服务就起不来。
+     * 放到 Activity 前台时再拉起，失败时下次回到前台还会重试。
+     */
+    override fun onStart() {
+        super.onStart()
+        val app = application as PmApp
+        if (app.container.repo.connections.isNotEmpty()) {
+            app.startLinkService()
+        }
+    }
+
     private fun handleIntent(intent: Intent?) {
         if (intent?.action != Intents.ACTION_OPEN_ITEM) return
         val connId = intent.getStringExtra(Intents.EXTRA_CONN_ID)

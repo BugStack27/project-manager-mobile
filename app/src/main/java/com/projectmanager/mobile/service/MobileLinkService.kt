@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
@@ -33,6 +34,7 @@ class MobileLinkService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var notificationJob: Job? = null
+    private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -56,6 +58,7 @@ class MobileLinkService : Service() {
         }
 
         linkManager.start()
+        holdCpuAwake()
         notifier.updateSummary()
         notificationJob = scope.launch {
             combine(repo.snapshot, linkManager.runtimes) { _, _ -> currentText() }
@@ -77,12 +80,32 @@ class MobileLinkService : Service() {
     override fun onDestroy() {
         notificationJob?.cancel()
         scope.cancel()
+        releaseCpuAwake()
         linkManager.setForeground(false)
         linkManager.stop()
         super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    /**
+     * Pull 轮询靠 15 秒定时器推进：息屏后系统会挂起 CPU，定时器不再触发，
+     * 待办要等用户点亮屏幕 / 打开应用才被拉走，通知自然就迟到了。
+     * 前台服务里持有部分唤醒锁，让轮询在息屏后继续跑。
+     */
+    private fun holdCpuAwake() {
+        if (wakeLock != null) return
+        val power = getSystemService(PowerManager::class.java) ?: return
+        wakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG).apply {
+            setReferenceCounted(false)
+            acquire()
+        }
+    }
+
+    private fun releaseCpuAwake() {
+        wakeLock?.let { runCatching { it.release() } }
+        wakeLock = null
+    }
 
     private fun currentText(): String {
         val connections = repo.connections.size
@@ -114,4 +137,8 @@ class MobileLinkService : Service() {
         } else {
             0
         }
+
+    private companion object {
+        const val WAKE_LOCK_TAG = "pm-mobile:link"
+    }
 }

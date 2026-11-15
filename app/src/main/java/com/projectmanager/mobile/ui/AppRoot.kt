@@ -129,7 +129,8 @@ fun AppRoot(
                         }
                     },
                     onToggleNotifications = vm::setNotificationsEnabled,
-                    onTestAlert = vm::testAlert
+                    onTestAlert = vm::testAlert,
+                    onBatteryPromptShown = vm::markBatteryPromptShown
                 )
             }
             composable("connections/{connId}") { entry ->

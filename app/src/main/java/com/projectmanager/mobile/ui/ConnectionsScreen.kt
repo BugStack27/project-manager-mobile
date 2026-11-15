@@ -47,6 +47,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -81,7 +82,8 @@ fun ConnectionsScreen(
     onOpenConnection: (String) -> Unit,
     onAdd: (ConnectInfo, String) -> Boolean,
     onToggleNotifications: (Boolean) -> Unit,
-    onTestAlert: () -> Unit
+    onTestAlert: () -> Unit,
+    onBatteryPromptShown: () -> Unit
 ) {
     val context = LocalContext.current
 
@@ -95,6 +97,17 @@ fun ConnectionsScreen(
     var alertMuted by remember { mutableStateOf(isAlertChannelMuted(context)) }
     var ignoringBattery by remember {
         mutableStateOf(isIgnoringBatteryOptimizations(context))
+    }
+    var showBatteryDialog by remember { mutableStateOf(false) }
+
+    // 已有连接的用户（升级上来的）也要引导一次：后台收不到通知大多是电池优化拦了联网
+    LaunchedEffect(state.connections.size, ignoringBattery, state.settings.batteryPromptShown) {
+        if (state.connections.isNotEmpty() &&
+            !ignoringBattery &&
+            !state.settings.batteryPromptShown
+        ) {
+            showBatteryDialog = true
+        }
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -404,6 +417,35 @@ fun ConnectionsScreen(
                 )
             }
         }
+    }
+
+    if (showBatteryDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                showBatteryDialog = false
+                onBatteryPromptShown()
+            },
+            title = { Text("让后台能收到通知") },
+            text = {
+                Text(
+                    "系统省电策略会限制后台联网：App 退到后台后可能收不到新待办，只有打开 App 才补收到。\n\n" +
+                        "把本项目设为「不限制」电池优化，后台才能继续拉取并立即提醒。部分系统还需要在「手机管家 / 自启动管理」里允许后台运行。"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showBatteryDialog = false
+                    onBatteryPromptShown()
+                    requestIgnoreBattery(context)
+                }) { Text("去设置") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showBatteryDialog = false
+                    onBatteryPromptShown()
+                }) { Text("稍后") }
+            }
+        )
     }
 
     if (pendingInfo != null) {

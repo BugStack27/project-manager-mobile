@@ -35,6 +35,7 @@ class MobileLinkService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var notificationJob: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private var foregroundEntered = false
 
     override fun onCreate() {
         super.onCreate()
@@ -42,24 +43,14 @@ class MobileLinkService : Service() {
         repo = container.repo
         linkManager = container.linkManager
         notifier = container.notifier
-        linkManager.setForeground(true)
 
-        try {
-            ServiceCompat.startForeground(
-                this,
-                Notifier.SERVICE_NOTIFICATION_ID,
-                notifier.serviceNotification(currentText()),
-                foregroundType()
-            )
-        } catch (e: Exception) {
-            Log.e("MobileLinkService", "进入前台失败", e)
-            stopSelf()
-            return
-        }
-
+        // 先拉起接收链路：即使这次进不了前台（后台被系统重启时可能被拒），
+        // 服务仍能立刻补拉一轮并补发通知，而不是整个后台接收直接停摆。
         linkManager.start()
         holdCpuAwake()
         notifier.updateSummary()
+        enterForeground()
+        linkManager.setForeground(foregroundEntered)
         notificationJob = scope.launch {
             combine(repo.snapshot, linkManager.runtimes) { _, _ -> currentText() }
                 .distinctUntilChanged()
@@ -68,6 +59,9 @@ class MobileLinkService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // 每次被拉起（包括用户重新打开 App）都重试进入前台，失败过也能自己恢复
+        enterForeground()
+        linkManager.setForeground(foregroundEntered)
         linkManager.start()
         if (repo.connections.isEmpty()) {
             stopSelf()
@@ -127,6 +121,28 @@ class MobileLinkService : Service() {
             )
         } catch (e: SecurityException) {
             Log.w("MobileLinkService", "更新服务通知失败", e)
+        }
+    }
+
+    /**
+     * 进入前台状态。Android 12 起，进程在后台被系统重启时这一步可能被拒
+     * （ForegroundServiceStartNotAllowedException）；此时不终止服务，只记日志，
+     * 让轮询继续跑完这一轮、把待办通知发出去，下次 onStartCommand 再重试。
+     */
+    private fun enterForeground(): Boolean {
+        if (foregroundEntered) return true
+        return try {
+            ServiceCompat.startForeground(
+                this,
+                Notifier.SERVICE_NOTIFICATION_ID,
+                notifier.serviceNotification(currentText()),
+                foregroundType()
+            )
+            foregroundEntered = true
+            true
+        } catch (e: Exception) {
+            Log.e("MobileLinkService", "进入前台失败，暂以后台服务继续接收", e)
+            false
         }
     }
 

@@ -244,6 +244,14 @@ description: 项目管理台手机端（Android + Compose，多桌面端连接�
 - 实现：`service/MobileLinkService.kt` 在服务存活期间持有 `PARTIAL_WAKE_LOCK`（`pm-mobile:link`），销毁时释放；`MainActivity.onStart` 在前台拉起服务，`PmApp.onCreate` 不再尝试后台启动；`AndroidManifest.xml` 增加 `WAKE_LOCK` 权限。
 - 验证：`assembleDebug`、`testDebugUnitTest` 通过；模拟器 API 35 冷启动日志 `Background started FGS: Allowed ... uidState: TOP`，息屏后 120 秒仍有 30 个收包（修复前 150 秒 0 个），force-stop 后唤醒锁正常释放；真实桌面端投递通知未在本轮复测。
 
+### 6. 后台仍不通知的续修（2026-11-15）✅
+
+- 现象：App 退到后台仍然收不到通知，只有打开 App 才看到待办（上一轮的息屏唤醒锁没解决）。
+- 定位：收到即通知的链路本身没问题（打开 App 后服务启动、立刻 Pull 并落待办，说明积压消息都在队列里）；差别在于**后台时进程/服务还在不在、能不能联网**。上一轮把服务启动挪到 Activity 前台后留下一个缺口：系统在后台重启服务时 `startForeground` 可能被拒，原实现直接 `stopSelf()`，后台接收从此停摆直到用户再打开 App。
+- 实现：`MobileLinkService` 先拉起 `LinkManager` 再尝试进入前台，失败只记日志、不终止服务，本轮仍会 Pull 并发通知，下次 `onStartCommand` 重试进入前台；`ConnectionsScreen` 在已有连接且未加入电池优化白名单时弹一次引导（`batteryPromptShown` 记录，只弹一次），可直接跳到系统授权页。
+- 验证：`:app:compileDebugKotlin`、`:app:testDebugUnitTest` 通过；真机后台行为未在本轮复测（当前没有连接设备）。
+- 剩余限制：Doze 期间未加白的应用网络会被挂起，国产 ROM 还可能直接清理后台进程，这两项只能由用户在系统里放行（电池优化 / 自启动管理）。
+
 ### 已知限制
 
 - 被用户「强行停止」后系统不会自动恢复服务（Android 限制）。

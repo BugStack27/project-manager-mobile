@@ -1,0 +1,68 @@
+package com.projectmanager.mobile
+
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import com.projectmanager.mobile.core.Intents
+import com.projectmanager.mobile.ui.AppRoot
+import com.projectmanager.mobile.ui.OpenTarget
+import com.projectmanager.mobile.ui.PmTheme
+import kotlinx.coroutines.flow.MutableStateFlow
+
+class MainActivity : ComponentActivity() {
+
+    private val openTarget = MutableStateFlow<OpenTarget?>(null)
+
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        handleIntent(intent)
+        setContent {
+            PmTheme {
+                AppRoot(
+                    app = application as PmApp,
+                    openTarget = openTarget,
+                    onConsumeTarget = { openTarget.value = null }
+                )
+            }
+        }
+        requestNotificationsIfNeeded()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        if (intent?.action != Intents.ACTION_OPEN_ITEM) return
+        val connId = intent.getStringExtra(Intents.EXTRA_CONN_ID)
+        val messageId = intent.getStringExtra(Intents.EXTRA_MESSAGE_ID)
+        if (!connId.isNullOrEmpty() && !messageId.isNullOrEmpty()) {
+            openTarget.value = OpenTarget(connId, messageId)
+        }
+    }
+
+    private fun requestNotificationsIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val app = application as PmApp
+        if (app.container.repo.connections.isEmpty()) return
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+}

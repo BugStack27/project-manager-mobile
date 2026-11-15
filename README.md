@@ -31,6 +31,22 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 `local.properties` 已写入 `sdk.dir=D:/Android/Sdk`（按本机路径调整）。
 
+## 发布
+
+推一个 `v` 前缀的 tag 即触发 `.github/workflows/release.yml`：跑单元测试、构建 release APK，挂到同名 GitHub Release（附 `sha256` 校验文件），手机浏览器打开 Release 页即可下载安装。
+
+```bash
+# 先把 app/build.gradle.kts 的 versionName 改成 0.1.1 并提交，再打 tag
+git tag -a v0.1.1 -m "修复息屏后通知延迟"
+git push origin v0.1.1
+```
+
+- tag 去掉 `v` 必须与 `versionName` 完全一致，否则流水线直接失败；`versionCode` 由 tag 推导为 `major*10000 + minor*100 + patch`，保证新包能覆盖旧包装上。
+- 签名：配置仓库 secrets 后使用正式密钥，未配置时退回 debug 签名（可直接安装，但不适合长期分发）。需要配置的 secrets：
+  - `ANDROID_KEYSTORE_BASE64`：keystore 文件 `base64 -w0 release.keystore`
+  - `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD`
+- 本机签名打包：在根目录放 `keystore.properties`（`storeFile` / `storePassword` / `keyAlias` / `keyPassword`，已 gitignore），`./gradlew :app:assembleRelease` 自动使用它。
+
 ## 使用
 
 1. 桌面端打开「设置与数据 → 通知与集成 → 手机端通信」，开启通道并显示二维码。

@@ -1,0 +1,151 @@
+name: Release
+
+# 推 v 前缀 tag 触发（参考桌面端项目管理器的 release.yml）：v0.1.0 → 跑单元测试、
+# 构建 release APK，并挂到同名 GitHub Release，手机浏览器打开 Release 页即可下载安装。
+#
+# 版本规则：tag 去掉 v 必须等于 app/build.gradle.kts 的 versionName；
+# versionCode 由 tag 推导（major*10000 + minor*100 + patch），保证新包能覆盖旧包装上。
+#
+# 签名：配置了 ANDROID_KEYSTORE_BASE64 等 secrets 时用正式密钥签名；
+# 没配置时退回 debug 签名——包仍可直接安装与升级，只是不适合长期分发。
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      # Release 正文取自 annotated tag 的注释，需要完整 tag 与历史
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      # gradle.properties 里钉了本机 JDK（D:/Android/Studio/jbr），runner 上没有这个路径，
+      # 后面每条 gradle 命令都用 -Dorg.gradle.java.home="$JAVA_HOME" 覆盖成 runner 的 JDK。
+      # local.properties（sdk.dir）已被 gitignore，CI 走 runner 预装的 ANDROID_HOME。
+      - name: 校验 tag 与版本一致
+        id: ver
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          APP_VERSION="$(sed -n 's/.*versionName *= *"\([^"]*\)".*/\1/p' app/build.gradle.kts | tr -d '\r' | head -n1)"
+          if [ "$VERSION" != "$APP_VERSION" ]; then
+            echo "::error::tag $GITHUB_REF_NAME 与 app/build.gradle.kts 的 versionName $APP_VERSION 不一致"
+            exit 1
+          fi
+          IFS=. read -r MAJOR MINOR PATCH <<< "$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "code=$((MAJOR * 10000 + MINOR * 100 + PATCH))" >> "$GITHUB_OUTPUT"
+
+      - name: 准备签名密钥
+        id: signing
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "未配置 ANDROID_KEYSTORE_BASE64，release 包将使用 debug 签名"
+            echo "signed=debug" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          cat > keystore.properties <<EOF
+          storeFile=$RUNNER_TEMP/release.keystore
+          storePassword=$STORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+          echo "signed=release" >> "$GITHUB_OUTPUT"
+
+      - name: 单元测试
+        run: ./gradlew :app:testDebugUnitTest --no-daemon -Dorg.gradle.java.home="$JAVA_HOME" -PversionCode=${{ steps.ver.outputs.code }}
+
+      - name: 构建 release APK
+        run: ./gradlew :app:assembleRelease --no-daemon -Dorg.gradle.java.home="$JAVA_HOME" -PversionCode=${{ steps.ver.outputs.code }}
+
+      - name: 整理产物
+        id: apk
+        shell: bash
+        run: |
+          ls -l app/build/outputs/apk/release
+          APK="$(ls app/build/outputs/apk/release/*.apk | head -n1)"
+          OUT="project-manager-mobile-${{ steps.ver.outputs.version }}.apk"
+          cp "$APK" "$OUT"
+          sha256sum "$OUT" > "$OUT.sha256"
+          cat "$OUT.sha256"
+          echo "file=$OUT" >> "$GITHUB_OUTPUT"
+
+      # 与桌面端同一套做法：不用第三方发布 action，Release 由 gh 建与传。
+      # 列表查询必须带 token（/releases/tags/:tag 查不到草稿），否则重推同名 tag
+      # 时会再建一份，下载地址指到没人下载的那一份。
+      - name: 建 Release 并上传资产
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="$GITHUB_REF_NAME"
+          VER="${{ steps.ver.outputs.version }}"
+          BODY="$(git tag -l --format='%(contents)' "$TAG")"
+
+          ID=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate \
+                 --jq ".[] | select(.tag_name==\"$TAG\") | .id" | head -n1)
+
+          if [ -z "$ID" ]; then
+            echo "没有现存 Release，新建 $TAG"
+            ID=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" \
+                   -f tag_name="$TAG" -f name="$VER" -f body="$BODY" \
+                   -F draft=false -F make_latest=true --jq .id)
+          else
+            echo "复用 Release $ID，重新绑定 tag 并确保处于已发布状态"
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$ID" \
+              -f tag_name="$TAG" -f name="$VER" -f body="$BODY" \
+              -F draft=false -F make_latest=true >/dev/null
+          fi
+
+          # --clobber：重发同一版本时覆盖同名旧资产，不会卡在 422
+          gh release upload "$TAG" "${{ steps.apk.outputs.file }}" \
+            "${{ steps.apk.outputs.file }}.sha256" --clobber
+
+          draft=$(gh api "repos/$GITHUB_REPOSITORY/releases/$ID" --jq .draft)
+          rtag=$(gh api "repos/$GITHUB_REPOSITORY/releases/$ID" --jq .tag_name)
+          assets=$(gh api "repos/$GITHUB_REPOSITORY/releases/$ID" --jq '[.assets[].name]|join(",")')
+          echo "release $ID: draft=$draft tag=$rtag assets=$assets"
+
+          [ "$draft" = "false" ] || { echo "::error::Release 仍是草稿，下载地址不会生效"; exit 1; }
+          [ "$rtag" = "$TAG" ]   || { echo "::error::Release 绑定的 tag 是 $rtag，不是 $TAG"; exit 1; }
+          case "$assets" in *.apk*) ;; *) echo "::error::Release 缺少 apk"; exit 1 ;; esac
+
+      # 收尾：同一个 tag 只留上面那份 Release，历史遗留的草稿 / 重复一并删掉
+      - name: 清理同名重复 Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="$GITHUB_REF_NAME"
+          ids=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate \
+                  --jq ".[] | select(.tag_name==\"$TAG\") | .id")
+          keep=$(echo "$ids" | head -n1)
+          echo "$ids" | tail -n +2 | while read -r id; do
+            [ -z "$id" ] && continue
+            echo "删除重复 Release $id（保留 $keep）"
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+          done

@@ -5,6 +5,7 @@ import com.projectmanager.mobile.data.AppRepository
 import com.projectmanager.mobile.data.ConnectionRecord
 import com.projectmanager.mobile.data.ConnectionRuntime
 import com.projectmanager.mobile.data.PendingItem
+import com.projectmanager.mobile.data.RemoteConfig
 import com.projectmanager.mobile.notify.Notifier
 import java.io.IOException
 import kotlinx.coroutines.CoroutineScope
@@ -227,6 +228,25 @@ class PushGoSession(
                                     val removed = repo.removeItems(keys)
                                     removed.forEach { notifier.cancelItem(it) }
                                     if (removed.isNotEmpty()) notifier.updateSummary()
+                                }
+                                // 桌面端把隧道地址随心跳带下来：地址变了就自动换，用户不用手填。
+                                // 只认同时有地址与令牌的完整接入点，缺一个就保持原样。
+                                val endpoint = payload?.get("endpoint") as? JsonObject
+                                if (endpoint != null) {
+                                    val url = endpoint.str("url")?.trim().orEmpty()
+                                    val token = endpoint.str("token")?.trim().orEmpty()
+                                    if (url.isNotBlank() && token.isNotBlank()) {
+                                        val current = repo.snapshot.value.remote
+                                        if (current.baseUrl != url || current.token != token) {
+                                            repo.updateRemote(
+                                                RemoteConfig(
+                                                    baseUrl = url,
+                                                    token = token,
+                                                    updatedAt = System.currentTimeMillis()
+                                                )
+                                            )
+                                        }
+                                    }
                                 }
                                 publishRuntime()
                             }

@@ -79,12 +79,32 @@ data class AppSettings(
     val batteryPromptShown: Boolean = false
 )
 
+/**
+ * 远程访问配置：桌面端隧道地址 + 令牌。
+ *
+ * 与 PushGo 连接信息分开存：PushGo 负责「把地址和令牌送到手机上」，这里存的是送到之后
+ * 用来直连桌面端 /remote 接口的两样东西。地址会随隧道重建而变，令牌不会——
+ * 所以两者一起存，改了地址不必重新配对令牌。
+ */
+@Serializable
+data class RemoteConfig(
+    val baseUrl: String = "",
+    val token: String = "",
+    val updatedAt: Long = 0L
+) {
+    val ready: Boolean get() = baseUrl.isNotBlank() && token.isNotBlank()
+
+    fun normalized(): RemoteConfig = copy(baseUrl = baseUrl.trim().trimEnd('/'), token = token.trim())
+}
+
 @Serializable
 data class StoreSnapshot(
     val connections: List<ConnectionRecord> = emptyList(),
     val items: List<PendingItem> = emptyList(),
     val notified: List<String> = emptyList(),
-    val settings: AppSettings = AppSettings()
+    val settings: AppSettings = AppSettings(),
+    /** 老版本的存档没有这一块：靠默认值补上，不必迁移 */
+    val remote: RemoteConfig = RemoteConfig()
 )
 
 data class ConnectionRuntime(

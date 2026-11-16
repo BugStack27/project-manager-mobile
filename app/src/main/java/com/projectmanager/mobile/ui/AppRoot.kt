@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.FactCheck
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -49,6 +50,8 @@ fun AppRoot(
 ) {
     val vm: AppViewModel = viewModel(factory = AppViewModel.factory(app))
     val state by vm.state.collectAsStateWithLifecycle()
+    val remoteVm: RemoteViewModel = viewModel(factory = RemoteViewModel.factory(app))
+    val remoteState by remoteVm.state.collectAsStateWithLifecycle()
     val navController = rememberNavController()
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -58,6 +61,13 @@ fun AppRoot(
                 is UiEvent.Message -> snackbarHostState.showSnackbar(event.text)
             }
         }
+    }
+
+    /** 远程面的操作回执（采纳成功、打回失败…）：由 ViewModel 抛一次，显示完清掉 */
+    LaunchedEffect(remoteState.notice) {
+        val text = remoteState.notice ?: return@LaunchedEffect
+        remoteVm.consumeNotice()
+        snackbarHostState.showSnackbar(text)
     }
 
     val target by openTarget.collectAsStateWithLifecycle()
@@ -71,7 +81,7 @@ fun AppRoot(
 
     val backStackEntry by navController.currentBackStackEntryAsState()
     val route = backStackEntry?.destination?.route
-    val showTabs = route == "todos" || route == "connections"
+    val showTabs = route == "todos" || route == "connections" || route == "remote"
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -82,6 +92,7 @@ fun AppRoot(
                 BottomTabs(
                     selected = route ?: "todos",
                     todoCount = state.items.count { it.sentAt == null },
+                    remoteCount = remoteState.pendingCount,
                     onSelect = { destination ->
                         navController.navigate(destination) {
                             popUpTo("todos") { saveState = true }
@@ -188,12 +199,53 @@ fun AppRoot(
                     }
                 )
             }
+            /* ── 项目 / 需求：走桌面端 /remote 接口，与 PushGo 待办互不干扰 ── */
+            composable("remote") {
+                RemoteProjectsScreen(
+                    state = remoteState,
+                    onRefresh = remoteVm::refresh,
+                    onOpenProject = { project ->
+                        navController.navigate("remote/p/${Uri.encode(project.id)}")
+                    }
+                )
+            }
+            composable("remote/p/{projectId}") { entry ->
+                val projectId = entry.arguments?.getString("projectId").orEmpty()
+                val project = remoteState.projects.firstOrNull { it.id == projectId }
+                LaunchedEffect(projectId) { remoteVm.loadRequirements(projectId) }
+                RemoteRequirementsScreen(
+                    state = remoteState,
+                    projectName = project?.name.orEmpty(),
+                    onBack = { navController.popBackStack() },
+                    onOpenRequirement = { requirement ->
+                        navController.navigate(
+                            "remote/p/${Uri.encode(projectId)}/r/${Uri.encode(requirement.id)}"
+                        )
+                    },
+                    onAdopt = { requirement -> remoteVm.setStatus(requirement.id, "todo") },
+                    onReject = { requirement -> remoteVm.setStatus(requirement.id, "rejected") }
+                )
+            }
+            composable("remote/p/{projectId}/r/{rid}") { entry ->
+                val projectId = entry.arguments?.getString("projectId").orEmpty()
+                val rid = entry.arguments?.getString("rid").orEmpty()
+                LaunchedEffect(projectId, rid) {
+                    if (remoteState.requirements.none { it.id == rid }) remoteVm.loadRequirements(projectId)
+                }
+                RemoteRequirementScreen(
+                    vm = remoteVm,
+                    state = remoteState,
+                    projectId = projectId,
+                    requirement = remoteState.requirements.firstOrNull { it.id == rid },
+                    onBack = { navController.popBackStack() }
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun BottomTabs(selected: String, todoCount: Int, onSelect: (String) -> Unit) {
+private fun BottomTabs(selected: String, todoCount: Int, remoteCount: Int, onSelect: (String) -> Unit) {
     NavigationBar(
         containerColor = MaterialTheme.colorScheme.background,
         tonalElevation = 0.dp
@@ -213,6 +265,29 @@ private fun BottomTabs(selected: String, todoCount: Int, onSelect: (String) -> U
                 }
             },
             label = { Text("待办", fontSize = 10.5.sp) },
+            colors = NavigationBarItemDefaults.colors(
+                selectedIconColor = MaterialTheme.colorScheme.primary,
+                selectedTextColor = MaterialTheme.colorScheme.primary,
+                indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        )
+        NavigationBarItem(
+            selected = selected == "remote",
+            onClick = { onSelect("remote") },
+            icon = {
+                BadgedBox(badge = {
+                    if (remoteCount > 0) {
+                        Badge(containerColor = MaterialTheme.colorScheme.error, contentColor = Color.White) {
+                            Text("$remoteCount", fontSize = 10.sp)
+                        }
+                    }
+                }) {
+                    Icon(Icons.Outlined.FolderOpen, contentDescription = null)
+                }
+            },
+            label = { Text("项目", fontSize = 10.5.sp) },
             colors = NavigationBarItemDefaults.colors(
                 selectedIconColor = MaterialTheme.colorScheme.primary,
                 selectedTextColor = MaterialTheme.colorScheme.primary,

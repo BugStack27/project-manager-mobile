@@ -138,8 +138,34 @@ class Notifier(
         updateSummary()
     }
 
-    fun cancelItem(item: PendingItem) {
+    /**
+     * 远程面（HTTP 长轮询）发现的新待办。
+     *
+     * 与 PushGo 那条通道各自提醒、各自去重：可能同一条待办两条路都收到，但提醒内容一致、
+     * 点进去都是同一个需求，重复弹一次比漏掉强。id 用待办指纹，重启后同一条不会重复提醒。
+     */
+    fun notifyRemote(ticketId: String, title: String, body: String) {
+        if (!repo.settings.notificationsEnabled) return
+        if (!manager.areNotificationsEnabled()) return
+        val builder = NotificationCompat.Builder(context, TODO_CHANNEL)
+            .setSmallIcon(R.drawable.ic_stat_todo)
+            .setContentTitle(title)
+            .setContentText(body.lineSequence().firstOrNull().orEmpty())
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
+            .setGroup(GROUP_TODO)
+            .setContentIntent(openAppIntent(ticketId.hashCode()))
         try {
+            manager.notify(ticketId.hashCode(), builder.build())
+        } catch (e: SecurityException) {
+            Log.w("Notifier", "通知权限缺失", e)
+        }
+    }
+
+    fun cancelItem(item: PendingItem) {        try {
             manager.cancel(notificationId(item))
         } catch (_: Exception) {
         }

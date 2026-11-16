@@ -247,6 +247,12 @@ class AppRepository(private val store: SecureStore) {
         update(current.copy(settings = transform(current.settings)))
     }
 
+    /** 桌面端地址与令牌：只改这一块，不动 PushGo 连接与会话密钥 */
+    @Synchronized
+    fun updateRemote(config: RemoteConfig) {
+        update(_snapshot.value.copy(remote = config.normalized()))
+    }
+
     fun findItem(connId: String, messageId: String): PendingItem? =
         items.firstOrNull { it.connId == connId && it.messageId == messageId }
 

@@ -21,7 +21,6 @@ import com.projectmanager.mobile.data.AppRepository
 import com.projectmanager.mobile.data.ConnectionRecord
 import com.projectmanager.mobile.data.ItemKind
 import com.projectmanager.mobile.data.PendingItem
-import com.projectmanager.mobile.data.REMOTE_CONN_ID
 
 /**
  * 通知是手机端的主要入口：新审核 / 新提问各发一条，同一消息 id 只提醒一次；
@@ -147,26 +146,35 @@ class Notifier(
     /**
      * 远程面（HTTP 长轮询）发现的新待办。
      *
-     * 与 PushGo 那条通道各自提醒、各自去重：可能同一条待办两条路都收到，但提醒内容一致、
-     * 点进去都是同一个需求，重复弹一次比漏掉强。id 用待办指纹，重启后同一条不会重复提醒。
+     * 标题带来源电脑名，正文带「电脑 · 项目 #序号」：多台桌面端同时在线时，
+     * 一眼能看出这条是哪个项目、在哪台机器上。
      */
-    fun notifyRemote(ticketId: String, messageId: String, title: String, body: String) {
+    fun notifyRemote(item: PendingItem, connectionName: String) {
         if (!repo.settings.notificationsEnabled) return
         if (!manager.areNotificationsEnabled()) return
+        val title = when (item.kind) {
+            ItemKind.REVIEW -> "待审核 · $connectionName"
+            ItemKind.QUESTION -> "待回答 · $connectionName"
+        }
+        val source = item.sourceLabel(connectionName)
+        val big = when (item.kind) {
+            ItemKind.REVIEW -> item.note.ifBlank { item.title }
+            ItemKind.QUESTION -> item.questionText.ifBlank { item.title }
+        }
         val builder = NotificationCompat.Builder(context, TODO_CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_todo)
             .setContentTitle(title)
-            .setContentText(body.lineSequence().firstOrNull().orEmpty())
-            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setContentText("$source · ${item.title}")
+            .setStyle(NotificationCompat.BigTextStyle().bigText("$source\n\n$big"))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setAutoCancel(true)
             .setOnlyAlertOnce(true)
             .setGroup(GROUP_TODO)
-            // 点通知直接进详情：与老通道同一条深链，connId 固定 remote
-            .setContentIntent(openItemIntent(REMOTE_CONN_ID, messageId))
+            // 点通知直接进详情：connId 是来源电脑，详情页据此走同一台桌面端提交
+            .setContentIntent(openItemIntent(item))
         try {
-            manager.notify(ticketId.hashCode(), builder.build())
+            manager.notify(notificationId(item), builder.build())
         } catch (e: SecurityException) {
             Log.w("Notifier", "通知权限缺失", e)
         }

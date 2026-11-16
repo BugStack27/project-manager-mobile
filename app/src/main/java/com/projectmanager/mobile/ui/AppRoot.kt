@@ -38,7 +38,6 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.projectmanager.mobile.PmApp
-import com.projectmanager.mobile.data.REMOTE_CONN_ID
 import kotlinx.coroutines.flow.StateFlow
 
 data class OpenTarget(val connId: String, val messageId: String)
@@ -93,7 +92,7 @@ fun AppRoot(
                 BottomTabs(
                     selected = route ?: "todos",
                     todoCount = state.items.count { it.isActionable() },
-                    remoteCount = remoteState.pendingCount,
+                    remoteCount = state.items.count { it.isActionable() },
                     onSelect = { destination ->
                         navController.navigate(destination) {
                             popUpTo("todos") { saveState = true }
@@ -187,7 +186,7 @@ fun AppRoot(
                 val messageId = entry.arguments?.getString("messageId").orEmpty()
                 val item = state.items.firstOrNull { it.connId == connId && it.messageId == messageId }
                 val connectionName = state.connections.firstOrNull { it.id == connId }?.name
-                    ?: if (connId == REMOTE_CONN_ID) "桌面端" else "已移除的连接"
+                    ?: "已移除的连接"
                 ItemScreen(
                     item = item,
                     connectionName = connectionName,
@@ -201,42 +200,54 @@ fun AppRoot(
                     }
                 )
             }
-            /* ── 项目 / 需求：走桌面端 /remote 接口，与 PushGo 待办互不干扰 ── */
+            /* ── 项目 / 需求：每台桌面端各走自己的 /remote，与 PushGo 待办互不干扰 ── */
             composable("remote") {
                 RemoteProjectsScreen(
                     state = remoteState,
                     onRefresh = remoteVm::refresh,
-                    onOpenProject = { project ->
-                        navController.navigate("remote/p/${Uri.encode(project.id)}")
+                    onOpenProject = { entry ->
+                        navController.navigate(
+                            "remote/p/${Uri.encode(entry.connectionId)}/${Uri.encode(entry.project.id)}"
+                        )
                     }
                 )
             }
-            composable("remote/p/{projectId}") { entry ->
+            composable("remote/p/{connId}/{projectId}") { entry ->
+                val connId = entry.arguments?.getString("connId").orEmpty()
                 val projectId = entry.arguments?.getString("projectId").orEmpty()
-                val project = remoteState.projects.firstOrNull { it.id == projectId }
-                LaunchedEffect(projectId) { remoteVm.loadRequirements(projectId) }
+                val desktop = remoteState.desktops.firstOrNull { it.connectionId == connId }
+                val project = desktop?.projects?.firstOrNull { it.id == projectId }
+                LaunchedEffect(connId, projectId) { remoteVm.loadRequirements(connId, projectId) }
                 RemoteRequirementsScreen(
                     state = remoteState,
+                    desktopName = desktop?.connectionName.orEmpty(),
                     projectName = project?.name.orEmpty(),
                     onBack = { navController.popBackStack() },
                     onOpenRequirement = { requirement ->
                         navController.navigate(
-                            "remote/p/${Uri.encode(projectId)}/r/${Uri.encode(requirement.id)}"
+                            "remote/p/${Uri.encode(connId)}/${Uri.encode(projectId)}/r/${Uri.encode(requirement.id)}"
                         )
                     },
-                    onAdopt = { requirement -> remoteVm.setStatus(requirement.id, "todo") },
-                    onReject = { requirement -> remoteVm.setStatus(requirement.id, "rejected") }
+                    onAdopt = { requirement -> remoteVm.setStatus(connId, requirement.id, "todo") },
+                    onReject = { requirement -> remoteVm.setStatus(connId, requirement.id, "rejected") }
                 )
             }
-            composable("remote/p/{projectId}/r/{rid}") { entry ->
+            composable("remote/p/{connId}/{projectId}/r/{rid}") { entry ->
+                val connId = entry.arguments?.getString("connId").orEmpty()
                 val projectId = entry.arguments?.getString("projectId").orEmpty()
                 val rid = entry.arguments?.getString("rid").orEmpty()
-                LaunchedEffect(projectId, rid) {
-                    if (remoteState.requirements.none { it.id == rid }) remoteVm.loadRequirements(projectId)
+                val desktop = remoteState.desktops.firstOrNull { it.connectionId == connId }
+                val project = desktop?.projects?.firstOrNull { it.id == projectId }
+                LaunchedEffect(connId, projectId, rid) {
+                    if (remoteState.requirements.none { it.id == rid }) {
+                        remoteVm.loadRequirements(connId, projectId)
+                    }
                 }
                 RemoteRequirementScreen(
                     vm = remoteVm,
-                    state = remoteState,
+                    connId = connId,
+                    desktopName = desktop?.connectionName.orEmpty(),
+                    projectName = project?.name.orEmpty(),
                     projectId = projectId,
                     requirement = remoteState.requirements.firstOrNull { it.id == rid },
                     onBack = { navController.popBackStack() }

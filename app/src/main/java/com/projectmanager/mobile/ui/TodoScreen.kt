@@ -41,7 +41,6 @@ import androidx.compose.ui.unit.sp
 import com.projectmanager.mobile.data.ConnectionRuntime
 import com.projectmanager.mobile.data.ItemKind
 import com.projectmanager.mobile.data.PendingItem
-import com.projectmanager.mobile.data.REMOTE_CONN_ID
 
 @Composable
 fun TodoScreen(
@@ -186,7 +185,7 @@ fun TodoScreen(
                     if (reviews.isNotEmpty()) {
                         item { SectionHeader("待审核", reviews.size) }
                         items(reviews, key = { it.key }) { item ->
-                            val name = connectionsById[item.connId]?.name ?: if (item.connId == REMOTE_CONN_ID) "桌面端" else "已移除的连接"
+                            val name = connectionsById[item.connId]?.name ?: "已移除的连接"
                             TaskCard(item, name) { onOpenItem(item) }
                             Spacer(Modifier.height(8.dp))
                         }
@@ -194,7 +193,7 @@ fun TodoScreen(
                     if (questions.isNotEmpty()) {
                         item { SectionHeader("待回答", questions.size) }
                         items(questions, key = { it.key }) { item ->
-                            val name = connectionsById[item.connId]?.name ?: if (item.connId == REMOTE_CONN_ID) "桌面端" else "已移除的连接"
+                            val name = connectionsById[item.connId]?.name ?: "已移除的连接"
                             TaskCard(item, name) { onOpenItem(item) }
                             Spacer(Modifier.height(8.dp))
                         }

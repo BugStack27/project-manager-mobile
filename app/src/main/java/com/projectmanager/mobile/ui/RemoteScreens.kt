@@ -69,7 +69,7 @@ import kotlinx.coroutines.launch
 fun RemoteProjectsScreen(
     state: RemoteState,
     onRefresh: () -> Unit,
-    onOpenProject: (RemoteProject) -> Unit
+    onOpenProject: (RemoteProjectEntry) -> Unit
 ) {
     Column(
         Modifier
@@ -79,12 +79,16 @@ fun RemoteProjectsScreen(
         PageHeader(
             title = "项目",
             subtitle = when {
-                !state.ready -> "等你完成配对"
-                state.online -> "已连接"
-                else -> "连接中断"
+                state.desktops.isEmpty() -> "等你完成配对"
+                !state.ready -> "等待桌面端地址"
+                state.desktops.size == 1 -> {
+                    val desktop = state.desktops.first()
+                    if (desktop.online) "${desktop.connectionName} · 已连接" else "${desktop.connectionName} · 连接中断"
+                }
+                else -> "${state.desktops.count { it.online }}/${state.desktops.size} 台在线 · 共 ${state.projectCount} 个项目"
             },
             subtitleColor = when {
-                !state.ready -> MaterialTheme.colorScheme.onSurfaceVariant
+                state.desktops.isEmpty() || !state.ready -> MaterialTheme.colorScheme.onSurfaceVariant
                 state.online -> MaterialTheme.colorScheme.primary
                 else -> MaterialTheme.colorScheme.error
             },
@@ -98,56 +102,60 @@ fun RemoteProjectsScreen(
         )
 
         when {
-            !state.ready -> EmptyState(
-                title = "还没有桌面端地址",
-                subtitle = "桌面端打开「手机端通信」后，地址与令牌会随心跳自动同步到这里，不需要手动配置。" +
-                    "如果一直不出现，检查桌面端的手机端通信是否已启用、手机是否已经扫码配对。"
-            )
-
-            state.loading && state.projects.isEmpty() -> LoadingRow()
-
-            state.projects.isEmpty() -> EmptyState(
-                title = state.error ?: "还没有项目",
-                subtitle = if (state.error != null) "检查桌面端是否在运行、地址与令牌是否还对得上。" else "桌面端登记项目后，这里就会出现。",
-                action = { OutlinedButton(onClick = onRefresh) { Text("重试") } }
+            state.desktops.isEmpty() -> EmptyState(
+                title = "还没有连接桌面端",
+                subtitle = "先在「连接」里扫码配对；每台电脑的项目会分开显示，并标注来自哪台机器。"
             )
 
             else -> LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(state.projects, key = { it.id }) { project ->
-                    AppCard(modifier = Modifier.clickable { onOpenProject(project) }) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 13.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(Modifier.weight(1f)) {
+                state.desktops.forEach { desktop ->
+                    item(key = "desktop-${desktop.connectionId}") {
+                        DesktopHeader(desktop)
+                    }
+                    if (!desktop.ready) {
+                        item(key = "waiting-${desktop.connectionId}") {
+                            Text(
+                                "还没收到这台电脑的远程地址，桌面端开启手机端通信后会自动同步。",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp)
+                            )
+                        }
+                    } else if (desktop.loading && desktop.projects.isEmpty()) {
+                        item(key = "loading-${desktop.connectionId}") { LoadingRow() }
+                    } else if (desktop.error != null) {
+                        item(key = "error-${desktop.connectionId}") {
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
                                 Text(
-                                    project.name.ifBlank { "未命名项目" },
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    "读取失败：${desktop.error}",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.weight(1f)
                                 )
-                                if (project.path.isNotBlank()) {
-                                    Spacer(Modifier.height(3.dp))
-                                    Text(
-                                        project.path,
-                                        fontSize = 11.5.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
+                                TextButton(onClick = onRefresh) { Text("重试", fontSize = 12.sp) }
                             }
-                            Icon(
-                                Icons.AutoMirrored.Outlined.KeyboardArrowRight,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                modifier = Modifier.size(16.dp)
+                        }
+                    } else if (desktop.projects.isEmpty()) {
+                        item(key = "empty-${desktop.connectionId}") {
+                            Text(
+                                "这台电脑还没有登记项目。",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+                    items(desktop.projects, key = { "${desktop.connectionId}|${it.id}" }) { project ->
+                        ProjectCard(project) {
+                            onOpenProject(
+                                RemoteProjectEntry(desktop.connectionId, desktop.connectionName, project)
                             )
                         }
                     }
@@ -157,9 +165,80 @@ fun RemoteProjectsScreen(
     }
 }
 
+/** 每台电脑一组：项目同名时靠这一行区分是哪台机器的 */
+@Composable
+private fun DesktopHeader(desktop: RemoteDesktopState) {
+    val color = when {
+        desktop.online -> MaterialTheme.colorScheme.primary
+        desktop.error != null -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.outline
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 4.dp, end = 4.dp, top = 10.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        StatusDot(color)
+        Spacer(Modifier.width(6.dp))
+        Text(
+            desktop.connectionName,
+            fontSize = 12.5.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            if (desktop.ready) "${desktop.projects.size} 个项目" else "等待地址",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+        )
+    }
+}
+
+@Composable
+private fun ProjectCard(project: RemoteProject, onClick: () -> Unit) {
+    AppCard(modifier = Modifier.clickable(onClick = onClick)) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 13.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    project.name.ifBlank { "未命名项目" },
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (project.path.isNotBlank()) {
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        project.path,
+                        fontSize = 11.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+            Icon(
+                Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                modifier = Modifier.size(16.dp)
+            )
+        }
+    }
+}
+
 @Composable
 fun RemoteRequirementsScreen(
     state: RemoteState,
+    desktopName: String,
     projectName: String,
     onBack: () -> Unit,
     onOpenRequirement: (RemoteRequirement) -> Unit,
@@ -168,6 +247,24 @@ fun RemoteRequirementsScreen(
 ) {
     Column(Modifier.fillMaxSize()) {
         BackBar(title = projectName.ifBlank { "需求" }, onBack = onBack)
+        if (desktopName.isNotBlank()) {
+            Row(
+                modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Tag(
+                    desktopName,
+                    MaterialTheme.colorScheme.onSurfaceVariant,
+                    MaterialTheme.colorScheme.surfaceVariant
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "这个项目的需求都在这台电脑上",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                )
+            }
+        }
 
         when {
             state.loading && state.requirements.isEmpty() -> LoadingRow()
@@ -250,7 +347,9 @@ private fun RequirementCard(
 @Composable
 fun RemoteRequirementScreen(
     vm: RemoteViewModel,
-    state: RemoteState,
+    connId: String,
+    desktopName: String,
+    projectName: String,
     projectId: String,
     requirement: RemoteRequirement?,
     onBack: () -> Unit
@@ -276,8 +375,8 @@ fun RemoteRequirementScreen(
 
     LaunchedEffect(requirement.id) {
         loadingExtra = true
-        runCatching { vm.fetchChanges(projectId) }.onSuccess { changes = it }
-        runCatching { vm.fetchCommands(projectId) }.onSuccess { commands = it }
+        runCatching { vm.fetchChanges(connId, projectId) }.onSuccess { changes = it }
+        runCatching { vm.fetchCommands(connId, projectId) }.onSuccess { commands = it }
         loadingExtra = false
     }
 
@@ -295,7 +394,13 @@ fun RemoteRequirementScreen(
                 Spacer(Modifier.width(8.dp))
                 if (requirement.source == "ai") Tag("AI 提出", MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.primary.copy(alpha = 0.14f))
             }
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(6.dp))
+            Text(
+                listOf(desktopName, projectName).filter { it.isNotBlank() }.joinToString(" · "),
+                fontSize = 11.5.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+            )
+            Spacer(Modifier.height(8.dp))
             Text(
                 requirement.title,
                 fontSize = 19.sp,
@@ -332,9 +437,9 @@ fun RemoteRequirementScreen(
                 onDraftChange = { answerDraft = it },
                 onSubmit = { decision, text, qid ->
                     submitting = true
-                    vm.answer(requirement.id, decision, text, qid) { submitting = false }
+                    vm.answer(connId, requirement.id, decision, text, qid) { submitting = false }
                 },
-                onStatus = { status -> vm.setStatus(requirement.id, status) },
+                onStatus = { status -> vm.setStatus(connId, requirement.id, status) },
                 onFeedback = { textFor = "打回意见" }
             )
 
@@ -348,7 +453,7 @@ fun RemoteRequirementScreen(
                 else -> files.forEach { file ->
                     FileRow(file) {
                         scope.launch {
-                            runCatching { vm.fetchDiff(projectId, file) }
+                            runCatching { vm.fetchDiff(connId, projectId, file) }
                                 .onSuccess { diff = it }
                         }
                     }
@@ -367,7 +472,7 @@ fun RemoteRequirementScreen(
                             .fillMaxWidth()
                             .clickable {
                                 scope.launch {
-                                    runCatching { vm.fetchLogs(cmd.id) }.onSuccess {
+                                    runCatching { vm.fetchLogs(connId, cmd.id) }.onSuccess {
                                         logs = it
                                         logsTitle = cmd.name.ifBlank { cmd.text }
                                     }
@@ -435,7 +540,7 @@ fun RemoteRequirementScreen(
             onConfirm = { text ->
                 textFor = null
                 submitting = true
-                vm.answer(requirement.id, "feedback", text, null) { submitting = false }
+                vm.answer(connId, requirement.id, "feedback", text, null) { submitting = false }
             }
         )
     }

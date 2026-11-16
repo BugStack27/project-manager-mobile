@@ -18,6 +18,44 @@ class AppRepository(private val store: SecureStore) {
     private val _snapshot = MutableStateFlow(store.load())
     val snapshot: StateFlow<StoreSnapshot> = _snapshot.asStateFlow()
 
+    init {
+        migrateLegacyRemote()
+        dropUnattributedItems()
+    }
+
+    /**
+     * 老版本只存一条全局接入点。升级后按连接分开存，这里把它交给唯一的那台电脑；
+     * 多台连接时无法判断归属，只能等各自的心跳重新下发（桌面端每 10 分钟必发一次）。
+     */
+    private fun migrateLegacyRemote() {
+        val current = _snapshot.value
+        val legacy = current.remote
+        if (!legacy.ready) return
+        val target = current.connections.singleOrNull()
+        val connections = if (target != null && !target.remote.ready) {
+            current.connections.map { if (it.id == target.id) it.copy(remote = legacy) else it }
+        } else {
+            current.connections
+        }
+        update(current.copy(connections = connections, remote = RemoteConfig()))
+    }
+
+    /**
+     * 老版本只有一个全局接入点，待办统一挂在 `remote` 这个假连接下。
+     * 现在每条待办都要归到具体某台电脑；这些旧条目找不到归属，先清掉，下一轮长轮询会按连接重新落库。
+     */
+    private fun dropUnattributedItems() {
+        val current = _snapshot.value
+        val stale = current.items.filter { it.connId == LEGACY_REMOTE_CONN_ID }
+        if (stale.isEmpty()) return
+        update(
+            current.copy(
+                items = current.items.filterNot { it.connId == LEGACY_REMOTE_CONN_ID },
+                notified = current.notified.filterNot { it.startsWith("$LEGACY_REMOTE_CONN_ID|") }
+            )
+        )
+    }
+
     val connections: List<ConnectionRecord> get() = _snapshot.value.connections
     val items: List<PendingItem> get() = _snapshot.value.items
     val settings: AppSettings get() = _snapshot.value.settings
@@ -247,22 +285,30 @@ class AppRepository(private val store: SecureStore) {
         update(current.copy(settings = transform(current.settings)))
     }
 
-    /** 桌面端地址与令牌：只改这一块，不动 PushGo 连接与会话密钥 */
+    /** 桌面端下发的接入点：只写它自己的连接，多台电脑互不覆盖 */
     @Synchronized
-    fun updateRemote(config: RemoteConfig) {
-        update(_snapshot.value.copy(remote = config.normalized()))
+    fun updateRemoteEndpoint(connId: String, baseUrl: String, token: String) {
+        val next = RemoteConfig(baseUrl = baseUrl, token = token, updatedAt = System.currentTimeMillis()).normalized()
+        val current = _snapshot.value
+        val target = current.connections.firstOrNull { it.id == connId } ?: return
+        if (target.remote.baseUrl == next.baseUrl && target.remote.token == next.token) return
+        update(
+            current.copy(
+                connections = current.connections.map { if (it.id == connId) it.copy(remote = next) else it }
+            )
+        )
     }
 
     /**
-     * 用一轮长轮询的结果整体替换远程待办。
+     * 用一台桌面端的一轮长轮询结果替换它自己的远程待办。
      *
-     * 整体替换而不是增量合并：服务端返回的就是「当前所有待办」，其中消失的那些已经处理完了。
-     * 本地的答复状态（已提交 / 失败原因）按 messageId 继承，避免重拉把「刚点过通过」的痕迹冲掉。
+     * 只替换这台连接的条目，其他电脑的待办原样保留；本地的答复状态（已提交 / 失败原因）
+     * 按 messageId 继承，避免重拉把「刚点过通过」的痕迹冲掉。
      */
     @Synchronized
-    fun syncRemoteTickets(incoming: List<PendingItem>): List<PendingItem> {
+    fun syncRemoteTickets(connId: String, incoming: List<PendingItem>): List<PendingItem> {
         val current = _snapshot.value
-        val existing = current.items.filter { it.connId == REMOTE_CONN_ID }.associateBy { it.messageId }
+        val existing = current.items.filter { it.connId == connId }.associateBy { it.messageId }
         val merged = incoming.map { fresh ->
             val old = existing[fresh.messageId]
             if (old == null) {
@@ -278,12 +324,19 @@ class AppRepository(private val store: SecureStore) {
             }
         }
         val fresh = merged.filter { existing[it.messageId] == null }
-        val untouched = current.items.filter { it.connId != REMOTE_CONN_ID }
+        val untouched = current.items.filter { it.connId != connId }
         update(current.copy(items = untouched + merged))
         return fresh
     }
 
-    fun isRemoteNotified(id: String): Boolean = _snapshot.value.remoteNotified.contains(id)
+    /**
+     * 远程待办的提醒记录：新格式带连接 id，避免两台电脑的同名消息互相顶掉；
+     * 老存档只存过 messageId，一并认，升级后不会把还挂着的待办再响一遍。
+     */
+    fun isRemoteNotified(connId: String, messageId: String): Boolean {
+        val ids = _snapshot.value.remoteNotified
+        return ids.contains("$connId|$messageId") || ids.contains(messageId)
+    }
 
     @Synchronized
     fun markRemoteNotified(ids: Collection<String>) {
@@ -327,6 +380,11 @@ class AppRepository(private val store: SecureStore) {
         val element = this[key] ?: return null
         if (element is JsonNull) return null
         return (element as? JsonPrimitive)?.contentOrNull
+    }
+
+    private companion object {
+        /** 老版本的全局远程配置在待办里留下的固定 connId，只用于清理旧数据 */
+        const val LEGACY_REMOTE_CONN_ID = "remote"
     }
 }
 

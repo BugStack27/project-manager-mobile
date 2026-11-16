@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.projectmanager.mobile.PmApp
+import com.projectmanager.mobile.data.AppRepository
+import com.projectmanager.mobile.data.ConnectionRecord
 import com.projectmanager.mobile.data.RemoteApi
 import com.projectmanager.mobile.data.RemoteChangeFile
 import com.projectmanager.mobile.data.RemoteChanges
@@ -13,165 +15,181 @@ import com.projectmanager.mobile.data.RemoteDiff
 import com.projectmanager.mobile.data.RemoteLogs
 import com.projectmanager.mobile.data.RemoteProject
 import com.projectmanager.mobile.data.RemoteRequirement
-import com.projectmanager.mobile.data.RemoteTicket
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
- * 项目 / 需求这条线的状态：走桌面端 /remote 接口，与 PushGo 待办互不相干。
+ * 项目 / 需求这条线的状态：走各台桌面端的 /remote 接口，与 PushGo 通道互不相干。
  *
- * 待办仍由 LinkManager 走 PushGo 收：那条通道负责「桌面端主动推送」；
- * 这里的长轮询负责「手机主动要」，两者看到的是同一份待办，只是入口不同。
+ * 每台电脑各有一份接入点，项目按来源电脑分组：同名的两个项目也能看出分别在哪台机器上。
+ * 待办由前台服务里的 RemoteWatcher 常驻长轮询，这里只负责项目 / 需求这类按需读取的页面。
  */
-data class RemoteState(
-    val config: RemoteConfig = RemoteConfig(),
+data class RemoteProjectEntry(
+    val connectionId: String,
+    val connectionName: String,
+    val project: RemoteProject
+)
+
+data class RemoteDesktopState(
+    val connectionId: String,
+    val connectionName: String,
+    val ready: Boolean = false,
     val projects: List<RemoteProject> = emptyList(),
-    val requirements: List<RemoteRequirement> = emptyList(),
-    val tickets: List<RemoteTicket> = emptyList(),
     val loading: Boolean = false,
     val online: Boolean = false,
+    val error: String? = null
+)
+
+data class RemoteState(
+    val desktops: List<RemoteDesktopState> = emptyList(),
+    val requirements: List<RemoteRequirement> = emptyList(),
+    val loading: Boolean = false,
     val error: String? = null,
-    val notice: String? = null,
-    val lastSyncAt: Long? = null
+    val notice: String? = null
 ) {
-    val ready: Boolean get() = config.ready
-    /** 项目页角标：过期提问已经答不了了，不该继续算在「待处理」里 */
-    val pendingCount: Int
-        get() {
-            val now = System.currentTimeMillis()
-            return tickets.count { !it.isExpired(now) }
-        }
+    /** 至少有一台电脑已经拿到接入点 */
+    val ready: Boolean get() = desktops.any { it.ready }
+    val online: Boolean get() = desktops.any { it.online }
+    val projectCount: Int get() = desktops.sumOf { it.projects.size }
 }
 
 class RemoteViewModel(private val app: PmApp) : ViewModel() {
 
-    private val repo = app.container.repo
+    private val repo: AppRepository = app.container.repo
 
-    private val _state = MutableStateFlow(RemoteState(config = repo.snapshot.value.remote))
+    private val _state = MutableStateFlow(RemoteState())
     val state: StateFlow<RemoteState> = _state.asStateFlow()
 
-    private var pollJob: Job? = null
-    private var loadedProject: String = ""
+    /** 已经成功加载过项目的接入点：地址 / 令牌变了要重拉 */
+    private val loadedConfigs = HashMap<String, RemoteConfig>()
+    private val loadingProjects = HashSet<String>()
+    private val lastAttemptAt = HashMap<String, Long>()
+
+    private var loadedConnId: String = ""
+    private var loadedProjectId: String = ""
 
     init {
         viewModelScope.launch {
-            repo.snapshot.collect { snap ->
-                val incoming = snap.remote
-                if (incoming != _state.value.config) {
-                    _state.update { it.copy(config = incoming) }
-                    restart()
-                }
-            }
+            repo.snapshot.collect { snap -> syncDesktops(snap.connections) }
         }
-        restart()
     }
 
-    private fun api(): RemoteApi? =
-        _state.value.config.takeIf { it.ready }?.let { RemoteApi(it) }
-
-    private fun restart() {
-        pollJob?.cancel()
-        if (!_state.value.config.ready) {
-            _state.update { it.copy(tickets = emptyList(), online = false) }
-            return
-        }
-        loadProjects()
-        startPolling()
-    }
+    private fun apiFor(connId: String): RemoteApi? =
+        repo.connection(connId)?.remote?.takeIf { it.ready }?.let { RemoteApi(it) }
 
     /**
-     * 长轮询：挂 25 秒没变化就返回，拿到结果立刻发下一轮。
+     * 连接列表 → 项目页的分组。
      *
-     * 不用 WebSocket / SSE：公网隧道对单条 HTTP 请求有 100 秒上限，长连接会被周期性掐断；
-     * 长轮询每轮都是一条普通请求，穿任何代理都安全，断网重连也只是下一轮的事。
+     * 还没下发接入点的电脑也保留一行（提示等待配对），否则用户完全看不出这台机器为什么没有项目。
      */
-    private fun startPolling() {
-        val api = api() ?: return
-        pollJob = viewModelScope.launch {
-            var key = ""
-            while (isActive) {
-                try {
-                    val res = api.wait(key, 25)
-                    key = res.key
-                    _state.update {
-                        it.copy(
-                            tickets = res.messages,
-                            online = true,
-                            error = null,
-                            lastSyncAt = System.currentTimeMillis()
-                        )
-                    }
-                } catch (e: Exception) {
-                    _state.update { it.copy(online = false, error = e.message ?: "同步失败") }
-                    delay(5_000)
-                }
-            }
+    private fun syncDesktops(connections: List<ConnectionRecord>) {
+        val previous = _state.value.desktops.associateBy { it.connectionId }
+        val next = connections.map { conn ->
+            val old = previous[conn.id]
+            val ready = conn.remote.ready
+            RemoteDesktopState(
+                connectionId = conn.id,
+                connectionName = conn.name,
+                ready = ready,
+                projects = if (ready) old?.projects.orEmpty() else emptyList(),
+                loading = ready && old?.loading == true,
+                online = ready && old?.online == true,
+                error = if (ready) old?.error else null
+            )
+        }
+        _state.update { it.copy(desktops = next) }
+        for (conn in connections) {
+            if (conn.remote.ready) loadProjects(conn) else loadedConfigs.remove(conn.id)
         }
     }
 
-    fun saveConfig(baseUrl: String, token: String) {
-        repo.updateRemote(RemoteConfig(baseUrl = baseUrl, token = token, updatedAt = System.currentTimeMillis()))
-    }
-
-    fun clearConfig() {
-        repo.updateRemote(RemoteConfig())
+    fun refresh() {
+        repo.connections.forEach { loadProjects(it, force = true) }
     }
 
     fun consumeNotice() {
         _state.update { it.copy(notice = null) }
     }
 
-    fun refresh() {
-        loadProjects()
-        viewModelScope.launch {
-            val api = api() ?: return@launch
-            runCatching { api.pending() }.onSuccess { res ->
-                _state.update { it.copy(tickets = res.messages, online = true) }
-            }
-        }
-    }
+    /**
+     * 拉某一台电脑的项目列表。
+     *
+     * 失败后快照变化（长轮询落库、连接改名等）会再次触发，用 [lastAttemptAt] 限速，
+     * 避免桌面端关着时每秒都去撞一次超时。
+     */
+    private fun loadProjects(connection: ConnectionRecord, force: Boolean = false) {
+        if (!connection.remote.ready) return
+        val connId = connection.id
+        if (loadingProjects.contains(connId)) return
+        if (!force && loadedConfigs[connId] == connection.remote) return
+        val now = System.currentTimeMillis()
+        if (!force && now - (lastAttemptAt[connId] ?: 0) < RETRY_MS) return
 
-    fun loadProjects() {
-        val api = api() ?: return
+        lastAttemptAt[connId] = now
+        loadingProjects.add(connId)
+        updateDesktop(connId) { it.copy(loading = true, error = null) }
         viewModelScope.launch {
-            _state.update { it.copy(loading = true, error = null) }
             try {
-                val projects = api.projects()
-                _state.update { it.copy(projects = projects, loading = false, online = true) }
+                val projects = RemoteApi(connection.remote).projects()
+                loadedConfigs[connId] = connection.remote
+                updateDesktop(connId) {
+                    it.copy(projects = projects, loading = false, online = true, error = null)
+                }
             } catch (e: Exception) {
-                _state.update { it.copy(loading = false, error = e.message ?: "读取项目失败", online = false) }
+                loadedConfigs.remove(connId)
+                updateDesktop(connId) {
+                    it.copy(loading = false, online = false, error = e.message ?: "读取项目失败")
+                }
+            } finally {
+                loadingProjects.remove(connId)
             }
         }
     }
 
-    fun loadRequirements(projectId: String, force: Boolean = false) {
-        if (!force && loadedProject == projectId && _state.value.requirements.isNotEmpty()) return
-        loadedProject = projectId
-        val api = api() ?: return
+    private fun updateDesktop(connId: String, transform: (RemoteDesktopState) -> RemoteDesktopState) {
+        _state.update { st ->
+            st.copy(desktops = st.desktops.map { if (it.connectionId == connId) transform(it) else it })
+        }
+    }
+
+    fun loadRequirements(connId: String, projectId: String, force: Boolean = false) {
+        if (!force && loadedConnId == connId && loadedProjectId == projectId &&
+            _state.value.requirements.isNotEmpty()
+        ) {
+            return
+        }
+        val api = apiFor(connId)
+        if (api == null) {
+            _state.update { it.copy(requirements = emptyList(), error = "还没拿到这台电脑的地址") }
+            return
+        }
+        loadedConnId = connId
+        loadedProjectId = projectId
+        _state.update { it.copy(loading = true, error = null, requirements = emptyList()) }
         viewModelScope.launch {
-            _state.update { it.copy(loading = true, error = null, requirements = emptyList()) }
             try {
                 val list = api.requirements(projectId)
-                _state.update { it.copy(requirements = list, loading = false, online = true) }
+                if (loadedConnId == connId && loadedProjectId == projectId) {
+                    _state.update { it.copy(requirements = list, loading = false) }
+                }
             } catch (e: Exception) {
-                _state.update { it.copy(loading = false, error = e.message ?: "读取需求失败") }
+                if (loadedConnId == connId && loadedProjectId == projectId) {
+                    _state.update { it.copy(loading = false, error = e.message ?: "读取需求失败") }
+                }
             }
         }
     }
 
-    fun setStatus(requirementId: String, status: String) {
-        val api = api() ?: return
+    fun setStatus(connId: String, requirementId: String, status: String) {
+        val api = apiFor(connId) ?: return
         viewModelScope.launch {
             try {
                 api.setStatus(requirementId, status)
                 _state.update { it.copy(notice = if (status == "todo") "已采纳" else "已拒绝") }
-                if (loadedProject.isNotEmpty()) loadRequirements(loadedProject, force = true)
+                reloadLoadedRequirements(connId)
             } catch (e: Exception) {
                 _state.update { it.copy(notice = e.message ?: "操作失败") }
             }
@@ -179,13 +197,15 @@ class RemoteViewModel(private val app: PmApp) : ViewModel() {
     }
 
     fun answer(
+        connId: String,
         requirementId: String,
         decision: String,
         text: String?,
         questionId: String?,
         onResult: (Boolean) -> Unit
     ) {
-        val api = api() ?: run {
+        val api = apiFor(connId)
+        if (api == null) {
             onResult(false)
             return
         }
@@ -201,7 +221,7 @@ class RemoteViewModel(private val app: PmApp) : ViewModel() {
                     else -> res.message ?: "未生效：${res.reason ?: "状态已变化"}"
                 }
                 _state.update { it.copy(notice = message) }
-                if (res.applied && loadedProject.isNotEmpty()) loadRequirements(loadedProject, force = true)
+                if (res.applied) reloadLoadedRequirements(connId)
                 onResult(res.applied)
             } catch (e: Exception) {
                 _state.update { it.copy(notice = e.message ?: "提交失败") }
@@ -210,21 +230,31 @@ class RemoteViewModel(private val app: PmApp) : ViewModel() {
         }
     }
 
+    private fun reloadLoadedRequirements(connId: String) {
+        if (loadedConnId == connId && loadedProjectId.isNotEmpty()) {
+            loadRequirements(connId, loadedProjectId, force = true)
+        }
+    }
+
     /* ── 只读抓取：给需求详情页按需加载，不进全局状态，避免互相覆盖 ── */
 
-    suspend fun fetchChanges(projectId: String): RemoteChanges =
-        api()?.changes(projectId) ?: throw IllegalStateException("未配置桌面端")
+    suspend fun fetchChanges(connId: String, projectId: String): RemoteChanges =
+        apiFor(connId)?.changes(projectId) ?: throw IllegalStateException("这台电脑还没接入")
 
-    suspend fun fetchDiff(projectId: String, file: RemoteChangeFile): RemoteDiff =
-        api()?.diff(projectId, file.path, file.untracked) ?: throw IllegalStateException("未配置桌面端")
+    suspend fun fetchDiff(connId: String, projectId: String, file: RemoteChangeFile): RemoteDiff =
+        apiFor(connId)?.diff(projectId, file.path, file.untracked)
+            ?: throw IllegalStateException("这台电脑还没接入")
 
-    suspend fun fetchCommands(projectId: String): List<RemoteCommand> =
-        api()?.commands(projectId) ?: throw IllegalStateException("未配置桌面端")
+    suspend fun fetchCommands(connId: String, projectId: String): List<RemoteCommand> =
+        apiFor(connId)?.commands(projectId) ?: throw IllegalStateException("这台电脑还没接入")
 
-    suspend fun fetchLogs(commandId: String): RemoteLogs =
-        api()?.logs(commandId) ?: throw IllegalStateException("未配置桌面端")
+    suspend fun fetchLogs(connId: String, commandId: String): RemoteLogs =
+        apiFor(connId)?.logs(commandId) ?: throw IllegalStateException("这台电脑还没接入")
 
     companion object {
+        /** 项目列表失败后的重试间隔：桌面端关着时别每次都撞满超时 */
+        private const val RETRY_MS = 30_000L
+
         fun factory(app: PmApp): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = RemoteViewModel(app) as T

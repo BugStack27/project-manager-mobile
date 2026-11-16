@@ -282,6 +282,14 @@ description: 项目管理台手机端（Android + Compose，多桌面端连接�
 - 实现：`PendingItem.isActionable(now)` 收口成「未提交且未过期」；`RemoteTicket.isExpired` 与本地同一判据。提醒侧 `RemoteWatcher.announce` 跳过过期票、`Notifier.notifyItem` 加同一道闸；角标侧底部 tab、前台服务文案、汇总通知标题与 `setNumber`、项目页角标统一按 `isActionable` 计数。汇总通知加条目指纹去重，并在每轮长轮询后对一次账，把刚过期的条目从通知栏与角标里摘掉；过期条目仍留在列表灰显。
 - 验证：`:app:testDebugUnitTest`（新增 `ExpiryRulesTest` 6 组：截止前 / 过期 / 恰好到期 / 无截止时间 / 已提交 / 远程票同口径）、`:app:assembleDebug` 通过；未在真机上等一条提问自然过期复测提醒与角标。
 
+### 9. 项目按电脑归属（2026-11-16）✅
+
+- 现象：同时配对了多台电脑时，项目页只知道一堆项目名，分不清哪个项目在哪台机器上；待办也一律标成「桌面端」。
+- 根因：`/remote` 接入点只存一条全局配置，每台电脑的 PushGo 心跳都会覆盖它（最后写入者获胜），项目与待办都丢失了来源。
+- 实现：`ConnectionRecord` 增加 `remote`（地址 + 令牌），`PushGoSession` 只写自己那条连接；`RemoteWatcher` 改为每台电脑一条独立长轮询、按连接落库与提醒；项目页按电脑分组显示（未收到接入点的电脑也会列出并提示），需求页与详情页标注来源电脑；答复 / 采纳 / 拒绝 / diff / 命令输出都回到对应桌面端的 `/remote`。
+- 迁移：老存档的全局接入点在启动时迁移给唯一的那台连接；待办里挂 `remote` 这个假连接的旧条目清理掉，由下一轮长轮询按连接重新落库。
+- 验证：`:app:testDebugUnitTest`、`:app:assembleDebug` 通过；无连接设备，多台电脑联调与页面点击未在本轮复测。
+
 ### 已知限制
 
 - 被用户「强行停止」后系统不会自动恢复服务（Android 限制）。

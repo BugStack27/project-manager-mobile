@@ -15,7 +15,7 @@ class ExpiryRulesTest {
     private fun iso(millis: Long): String = Instant.ofEpochMilli(millis).toString()
 
     private fun question(expiresAt: String?, sentAt: Long? = null) = PendingItem(
-        connId = REMOTE_CONN_ID,
+        connId = "c_test",
         messageId = "m1",
         kind = ItemKind.QUESTION,
         requirementId = "r1",
@@ -53,7 +53,7 @@ class ExpiryRulesTest {
     @Test
     fun `review without deadline stays actionable`() {
         val item = PendingItem(
-            connId = REMOTE_CONN_ID,
+            connId = "c_test",
             messageId = "m2",
             kind = ItemKind.REVIEW,
             requirementId = "r2"

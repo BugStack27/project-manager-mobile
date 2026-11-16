@@ -11,7 +11,6 @@ import com.projectmanager.mobile.data.AppSettings
 import com.projectmanager.mobile.data.ConnectionRecord
 import com.projectmanager.mobile.data.ConnectionRuntime
 import com.projectmanager.mobile.data.PendingItem
-import com.projectmanager.mobile.data.REMOTE_CONN_ID
 import com.projectmanager.mobile.data.RemoteApi
 import com.projectmanager.mobile.service.MobileLinkService
 import java.io.IOException
@@ -113,14 +112,14 @@ class AppViewModel(private val app: PmApp) : ViewModel() {
     }
 
     /**
-     * 提交答复：唯一的通道是 /remote。
+     * 提交答复：按待办来源连接回到那台桌面端的 /remote。
      *
-     * 老数据里可能还留着 ntfy 时代的待办（connId 不是 remote），那些已经没有可用的提交通道，
+     * 连接被移除、或那台电脑还没下发接入点时没有可用的提交通道，
      * 直接告诉用户忽略，而不是发一个必然失败的请求。
      */
     fun answer(item: PendingItem, decision: String, text: String, onResult: (Boolean) -> Unit) {
-        if (item.connId != REMOTE_CONN_ID) {
-            notify("这条待办来自已停用的通道，忽略即可", error = true)
+        if (repo.connection(item.connId)?.remote?.ready != true) {
+            notify("这条待办来自已移除的连接，忽略即可", error = true)
             onResult(false)
             return
         }
@@ -138,8 +137,8 @@ class AppViewModel(private val app: PmApp) : ViewModel() {
 
     /** 远程面提交：返回一句给用户看的回执（含提交短哈希） */
     private suspend fun submitRemote(item: PendingItem, decision: String, text: String): String {
-        val config = repo.snapshot.value.remote
-        if (!config.ready) throw IOException("还没拿到桌面端地址，等配对完成后再试")
+        val config = repo.connection(item.connId)?.remote
+        if (config == null || !config.ready) throw IOException("还没拿到桌面端地址，等配对完成后再试")
         val res = RemoteApi(config).answer(
             requirementId = item.requirementId,
             decision = decision,

@@ -5,7 +5,6 @@ import com.projectmanager.mobile.data.AppRepository
 import com.projectmanager.mobile.data.ConnectionRecord
 import com.projectmanager.mobile.data.ConnectionRuntime
 import com.projectmanager.mobile.data.LinkFailure
-import com.projectmanager.mobile.data.RemoteConfig
 import java.io.IOException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -192,19 +191,14 @@ class PushGoSession(
 
     /**
      * 桌面端下发的接入点：地址与令牌同时齐全才落盘；缺一个就保持原样（旧地址可能还在用）。
-     * 地址变了不用用户做任何事，下一轮 RemoteWatcher 会自动接到新地址上。
+     * 只写这条连接自己的配置：多台电脑各自心跳，不能互相覆盖。
      */
     private fun applyEndpoint(payload: JsonObject?) {
         val endpoint = payload?.get("endpoint") as? JsonObject ?: return
         val url = endpoint.str("url")?.trim().orEmpty()
         val token = endpoint.str("token")?.trim().orEmpty()
         if (url.isBlank() || token.isBlank()) return
-        val current = repo.snapshot.value.remote
-        if (current.baseUrl != url || current.token != token) {
-            repo.updateRemote(
-                RemoteConfig(baseUrl = url, token = token, updatedAt = System.currentTimeMillis())
-            )
-        }
+        repo.updateRemoteEndpoint(connection.id, url, token)
     }
 
     private fun rememberSeen(id: String, at: Long) {

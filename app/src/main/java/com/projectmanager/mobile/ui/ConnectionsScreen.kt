@@ -236,7 +236,7 @@ fun ConnectionsScreen(
             }
         }
 
-        val online = state.runtimes.values.count { it.desktopOnline() }
+        val online = state.runtimes.values.count { it.connected }
         val reconnecting = state.connections.size - online
         val rescanNeeded = state.connections.count { state.runtimes[it.id]?.adviceKind?.needsRescan == true }
         Row(
@@ -536,7 +536,7 @@ private fun ConnectionCard(
     pending: Int,
     onClick: () -> Unit
 ) {
-    val online = runtime?.desktopOnline() == true
+    val online = runtime?.connected == true
     val advice = runtime?.adviceKind
     val danger = advice?.needsRescan == true
     val statusColor = when {
@@ -598,12 +598,8 @@ private fun ConnectionCard(
                         append(" · 待办 ")
                         append(pending)
                         append(" · ")
-                        // 连不上时把具体原因写在副行，比「尚无心跳」有用得多
-                        append(
-                            advice?.title
-                                ?: runtime?.lastInboundAt?.let { relativeTime(it) }
-                                ?: "尚无心跳"
-                        )
+                        // 连不上时把具体原因写在副行；连上了就只说通道状态，心跳不参与判定
+                        append(advice?.title ?: if (online) "通道已连接" else "连接中")
                     },
                     fontSize = 11.5.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),

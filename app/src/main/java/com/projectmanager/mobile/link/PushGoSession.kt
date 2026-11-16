@@ -31,6 +31,9 @@ import kotlinx.serialization.json.put
  * 2026-11-16 收窄：这条通道以前还负责接收审核/提问、回传答案，与 HTTP 长轮询并行维护两套业务状态。
  * 现在业务全部走 `/remote`（由前台服务里的 RemoteWatcher 常驻长轮询），这里只做一件事：
  * 把桌面端下发的隧道地址与令牌落盘，供远程面使用。
+ *
+ * 在线判定只看这条通道能否接上（`ensureReady` 成功即算连上），不等心跳包：
+ * 心跳只用于更新通道链接，收不到不代表连不上。
  */
 class PushGoSession(
     private val connection: ConnectionRecord,
@@ -173,6 +176,7 @@ class PushGoSession(
                 rememberSeen(messageId, now)
 
                 if (message.str("from") == "server" && message.str("type") == "keepalive") {
+                    // 心跳只用来刷新通道链接与「最近更新」时间，不决定连接状态
                     lastInboundAt = now
                     applyEndpoint(message["payload"] as? JsonObject)
                     publishRuntime()

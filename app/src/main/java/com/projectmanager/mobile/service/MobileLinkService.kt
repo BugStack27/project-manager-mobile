@@ -111,11 +111,11 @@ class MobileLinkService : Service() {
         val connections = repo.connections.size
         if (connections == 0) return "暂无连接"
         val runtimes = linkManager.runtimes.value
-        val online = runtimes.values.count { it.desktopOnline() }
+        val online = runtimes.values.count { it.connected }
         val items = repo.items.count { it.isActionable() }
         return when {
             online > 0 -> "$online 台在线 · $items 条待办"
-            else -> "等待桌面端心跳 · $items 条待办"
+            else -> "连接中 · $items 条待办"
         }
     }
 

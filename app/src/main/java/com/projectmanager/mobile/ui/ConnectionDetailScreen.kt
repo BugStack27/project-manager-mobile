@@ -101,7 +101,7 @@ fun ConnectionDetailScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = 24.dp)
         ) {
-            val online = runtime?.desktopOnline() == true
+            val online = runtime?.connected == true
             val advice = runtime?.adviceKind
             val danger = advice?.needsRescan == true
             val statusColor = when {
@@ -124,7 +124,7 @@ fun ConnectionDetailScreen(
                     Spacer(Modifier.width(10.dp))
                     Text(
                         when {
-                            online -> "桌面端在线"
+                            online -> "已连接"
                             runtime == null -> "连接中…"
                             else -> runtime.statusText
                         },
@@ -134,7 +134,11 @@ fun ConnectionDetailScreen(
                 }
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    if (runtime?.lastInboundAt != null) "最后活动 ${relativeTime(runtime.lastInboundAt)}" else "还没有收到桌面端消息",
+                    when {
+                        runtime?.lastInboundAt != null -> "通道链接更新于 ${relativeTime(runtime.lastInboundAt)}"
+                        online -> "通道已连接"
+                        else -> "还没有连上通道"
+                    },
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

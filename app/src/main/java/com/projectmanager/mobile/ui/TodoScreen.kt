@@ -210,7 +210,7 @@ private fun ConnectionStatusItem(name: String, runtime: ConnectionRuntime?) {
     val needsRescan = runtime?.adviceKind?.needsRescan == true
     val color = when {
         runtime == null -> MaterialTheme.colorScheme.outline
-        runtime.connected && runtime.desktopOnline() -> successColor()
+        runtime.connected -> successColor()
         needsRescan -> MaterialTheme.colorScheme.error
         else -> warningColor()
     }

@@ -22,11 +22,6 @@ enum class LinkFailureKind(
         title = "连不上 PushGo 网关",
         hint = "检查手机网络，或确认这台网关地址还能访问；网络恢复后会自动重连。"
     ),
-    DESKTOP_OFF(
-        chip = "桌面端离线",
-        title = "已连上网关，桌面端没有心跳",
-        hint = "确认电脑上的项目管理台正在运行；桌面端恢复后心跳会自动接上。"
-    ),
     PASSWORD(
         chip = "密码错误",
         title = "频道密码不对",

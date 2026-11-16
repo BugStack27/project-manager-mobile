@@ -121,6 +121,7 @@ data class StoreSnapshot(
 
 data class ConnectionRuntime(
     val connected: Boolean = false,
+    /** 最近一次收到 PushGo 心跳的时间：只说明通道链接更新过，不再参与在线判定 */
     val lastInboundAt: Long? = null,
     /** 最近一次连接失败（连上网关后清空）；没失败过就是 null */
     val failure: LinkFailure? = null,
@@ -129,25 +130,21 @@ data class ConnectionRuntime(
     val lastPublishAt: Long? = null,
     val reconnectAt: Long? = null
 ) {
-    fun desktopOnline(now: Long = System.currentTimeMillis()): Boolean =
-        lastInboundAt != null && now - lastInboundAt <= Protocol.CLIENT_ONLINE_MS
-
     /** 传输层原文，诊断用；界面展示走 [adviceKind] 的文案 */
     val lastError: String? get() = failure?.detail
 
     /**
-     * 当前该展示哪种失败说明。
+     * 当前该展示哪种失败说明；连上了就没有要提示的。
      *
-     * 「连上了网关但桌面端一直没心跳」不是异常，却是用户最容易误判的状态（以为是手机坏了），
-     * 所以也归到失败说明里，按 [LinkFailureKind.DESKTOP_OFF] 给出下一步。
+     * 在线判定只看 [connected]（通道接上即在线）：业务已全部走远程 HTTP，PushGo 只剩
+     * 「后台更新通道链接」，再拿它的心跳包判断在线会让通道明明通着却一直显示「等待心跳」。
      */
     val adviceKind: LinkFailureKind?
-        get() = failure?.kind ?: if (connected && !desktopOnline()) LinkFailureKind.DESKTOP_OFF else null
+        get() = failure?.kind
 
     val statusText: String
         get() = when {
-            connected && desktopOnline() -> "在线"
-            connected -> "已连接 · 等待桌面端心跳"
+            connected -> "已连接"
             failure != null -> failure.kind.title
             else -> "连接中…"
         }
@@ -155,8 +152,7 @@ data class ConnectionRuntime(
     /** 列表 / 状态行用的短标签 */
     val chipText: String
         get() = when {
-            connected && desktopOnline() -> "在线"
-            connected -> "等待心跳"
+            connected -> "在线"
             failure != null -> failure.kind.chip
             else -> "连接中"
         }

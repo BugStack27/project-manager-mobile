@@ -85,12 +85,22 @@ class LinkFailuresTest {
     }
 
     @Test
-    fun `connected without heartbeat reports desktop offline`() {
+    fun `connected channel is online even with a stale heartbeat`() {
+        // 心跳只用来更新通道链接，早就不参与在线判定：通道通着就该显示已连接
         val stale = System.currentTimeMillis() - Protocol.CLIENT_ONLINE_MS - 1000
         val runtime = ConnectionRuntime(connected = true, lastInboundAt = stale)
-        assertEquals(LinkFailureKind.DESKTOP_OFF, runtime.adviceKind)
-        assertEquals("等待心跳", runtime.chipText)
-        assertEquals("已连接 · 等待桌面端心跳", runtime.statusText)
+        assertNull(runtime.adviceKind)
+        assertEquals("在线", runtime.chipText)
+        assertEquals("已连接", runtime.statusText)
+        assertTrue(runtime.connected)
+    }
+
+    @Test
+    fun `connected channel is online before any inbound message`() {
+        val runtime = ConnectionRuntime(connected = true)
+        assertNull(runtime.adviceKind)
+        assertEquals("在线", runtime.chipText)
+        assertEquals("已连接", runtime.statusText)
     }
 
     @Test

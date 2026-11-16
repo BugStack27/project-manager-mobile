@@ -109,7 +109,7 @@ class LinkManager(
         val connections = repo.connections.size
         if (connections == 0) return "暂无连接"
         val runtimes = _runtimes.value
-        val online = runtimes.values.count { it.desktopOnline() }
+        val online = runtimes.values.count { it.connected }
         val items = repo.items.size
         return "$online 台在线 · $items 条待办"
     }

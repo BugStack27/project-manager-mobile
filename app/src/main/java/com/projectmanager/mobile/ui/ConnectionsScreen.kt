@@ -238,6 +238,7 @@ fun ConnectionsScreen(
 
         val online = state.runtimes.values.count { it.desktopOnline() }
         val reconnecting = state.connections.size - online
+        val rescanNeeded = state.connections.count { state.runtimes[it.id]?.adviceKind?.needsRescan == true }
         Row(
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -251,7 +252,15 @@ fun ConnectionsScreen(
                 Spacer(Modifier.width(10.dp))
                 StatusDot(warningColor())
                 Spacer(Modifier.width(6.dp))
-                Text("$reconnecting 台重连中", fontSize = 12.sp, color = warningColor())
+                Text("$reconnecting 台未连接", fontSize = 12.sp, color = warningColor())
+                if (rescanNeeded > 0) {
+                    Spacer(Modifier.width(10.dp))
+                    Text("·", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
+                    Spacer(Modifier.width(10.dp))
+                    StatusDot(MaterialTheme.colorScheme.error)
+                    Spacer(Modifier.width(6.dp))
+                    Text("$rescanNeeded 台需重新扫码", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                }
             }
             Spacer(Modifier.weight(1f))
             Text("待办 ${state.items.size}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -528,8 +537,11 @@ private fun ConnectionCard(
     onClick: () -> Unit
 ) {
     val online = runtime?.desktopOnline() == true
+    val advice = runtime?.adviceKind
+    val danger = advice?.needsRescan == true
     val statusColor = when {
         online -> successColor()
+        danger -> MaterialTheme.colorScheme.error
         runtime == null -> MaterialTheme.colorScheme.outline
         else -> warningColor()
     }
@@ -542,13 +554,23 @@ private fun ConnectionCard(
                 modifier = Modifier
                     .size(42.dp)
                     .clip(RoundedCornerShape(13.dp))
-                    .background(if (online) MaterialTheme.colorScheme.surfaceVariant else warningTint()),
+                    .background(
+                        when {
+                            online -> MaterialTheme.colorScheme.surfaceVariant
+                            danger -> MaterialTheme.colorScheme.error.copy(alpha = 0.14f)
+                            else -> warningTint()
+                        }
+                    ),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     Icons.Outlined.Computer,
                     contentDescription = null,
-                    tint = if (online) MaterialTheme.colorScheme.onSurfaceVariant else warningColor(),
+                    tint = when {
+                        online -> MaterialTheme.colorScheme.onSurfaceVariant
+                        danger -> MaterialTheme.colorScheme.error
+                        else -> warningColor()
+                    },
                     modifier = Modifier.size(21.dp)
                 )
             }
@@ -564,7 +586,7 @@ private fun ConnectionCard(
                     )
                     Spacer(Modifier.width(7.dp))
                     Text(
-                        if (online) "在线" else if (runtime?.connected == true) "等待心跳" else "重连中",
+                        runtime?.chipText ?: "连接中",
                         fontSize = 11.sp,
                         color = statusColor
                     )
@@ -576,7 +598,12 @@ private fun ConnectionCard(
                         append(" · 待办 ")
                         append(pending)
                         append(" · ")
-                        append(runtime?.lastInboundAt?.let { relativeTime(it) } ?: "尚无心跳")
+                        // 连不上时把具体原因写在副行，比「尚无心跳」有用得多
+                        append(
+                            advice?.title
+                                ?: runtime?.lastInboundAt?.let { relativeTime(it) }
+                                ?: "尚无心跳"
+                        )
                     },
                     fontSize = 11.5.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),

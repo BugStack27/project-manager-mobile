@@ -207,10 +207,11 @@ fun TodoScreen(
 
 @Composable
 private fun ConnectionStatusItem(name: String, runtime: ConnectionRuntime?) {
+    val needsRescan = runtime?.adviceKind?.needsRescan == true
     val color = when {
         runtime == null -> MaterialTheme.colorScheme.outline
         runtime.connected && runtime.desktopOnline() -> successColor()
-        runtime.connected -> warningColor()
+        needsRescan -> MaterialTheme.colorScheme.error
         else -> warningColor()
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -219,12 +220,7 @@ private fun ConnectionStatusItem(name: String, runtime: ConnectionRuntime?) {
         Text(name, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.width(4.dp))
         Text(
-            when {
-                runtime == null -> "连接中"
-                runtime.connected && runtime.desktopOnline() -> "在线"
-                runtime.connected -> "等待心跳"
-                else -> "重连中"
-            },
+            runtime?.chipText ?: "连接中",
             fontSize = 11.sp,
             color = color
         )

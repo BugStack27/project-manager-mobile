@@ -4,6 +4,7 @@ import com.projectmanager.mobile.core.Protocol
 import com.projectmanager.mobile.data.AppRepository
 import com.projectmanager.mobile.data.ConnectionRecord
 import com.projectmanager.mobile.data.ConnectionRuntime
+import com.projectmanager.mobile.data.LinkFailure
 import com.projectmanager.mobile.data.RemoteConfig
 import java.io.IOException
 import kotlinx.coroutines.CoroutineScope
@@ -55,8 +56,9 @@ class PushGoSession(
     @Volatile
     private var lastPublishAt: Long? = null
 
+    /** 最近一次连接失败；成功接上（拿到网关会话）就清空，界面据此显示具体原因 */
     @Volatile
-    private var lastError: String? = null
+    private var failure: LinkFailure? = null
 
     @Volatile
     private var reconnectAt: Long? = null
@@ -89,7 +91,7 @@ class PushGoSession(
             try {
                 ensureReady()
                 connected = true
-                lastError = null
+                failure = null
                 reconnectAt = null
                 backoff = RECONNECT_MIN_MS
                 publishRuntime()
@@ -100,7 +102,7 @@ class PushGoSession(
             } catch (e: Exception) {
                 if (!currentCoroutineContext().isActive) break
                 connected = false
-                lastError = describe(e)
+                failure = LinkFailures.classify(e)
                 reconnectAt = System.currentTimeMillis() + backoff
                 publishRuntime()
                 delay(backoff)
@@ -177,7 +179,7 @@ class PushGoSession(
                 }
                 ackIds += item.deliveryId
             } catch (e: Exception) {
-                lastError = describe(e)
+                // 单条消息解不开（topic 被别的工具复用、密文坏掉）不影响连接状态，照旧 ack 掉即可
                 ackIds += item.deliveryId
             }
         }
@@ -213,7 +215,7 @@ class PushGoSession(
             ConnectionRuntime(
                 connected = connected,
                 lastInboundAt = lastInboundAt,
-                lastError = lastError,
+                failure = failure,
                 sessionStartedAt = startedAt,
                 lastPublishAt = lastPublishAt,
                 reconnectAt = reconnectAt
@@ -223,11 +225,6 @@ class PushGoSession(
 
     private fun JsonObject.str(key: String): String? =
         (this[key] as? JsonPrimitive)?.contentOrNull
-
-    private fun describe(e: Exception): String {
-        val message = e.message?.takeIf { it.isNotBlank() }
-        return message ?: e.javaClass.simpleName
-    }
 
     private companion object {
         const val POLL_MS = 15_000L

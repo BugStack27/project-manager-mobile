@@ -113,7 +113,8 @@ data class StoreSnapshot(
 data class ConnectionRuntime(
     val connected: Boolean = false,
     val lastInboundAt: Long? = null,
-    val lastError: String? = null,
+    /** 最近一次连接失败（连上网关后清空）；没失败过就是 null */
+    val failure: LinkFailure? = null,
     val pending: Int = 0,
     val sessionStartedAt: Long? = null,
     val lastPublishAt: Long? = null,
@@ -122,12 +123,33 @@ data class ConnectionRuntime(
     fun desktopOnline(now: Long = System.currentTimeMillis()): Boolean =
         lastInboundAt != null && now - lastInboundAt <= Protocol.CLIENT_ONLINE_MS
 
+    /** 传输层原文，诊断用；界面展示走 [adviceKind] 的文案 */
+    val lastError: String? get() = failure?.detail
+
+    /**
+     * 当前该展示哪种失败说明。
+     *
+     * 「连上了网关但桌面端一直没心跳」不是异常，却是用户最容易误判的状态（以为是手机坏了），
+     * 所以也归到失败说明里，按 [LinkFailureKind.DESKTOP_OFF] 给出下一步。
+     */
+    val adviceKind: LinkFailureKind?
+        get() = failure?.kind ?: if (connected && !desktopOnline()) LinkFailureKind.DESKTOP_OFF else null
+
     val statusText: String
         get() = when {
             connected && desktopOnline() -> "在线"
             connected -> "已连接 · 等待桌面端心跳"
-            lastError != null -> "重连中"
+            failure != null -> failure.kind.title
             else -> "连接中…"
+        }
+
+    /** 列表 / 状态行用的短标签 */
+    val chipText: String
+        get() = when {
+            connected && desktopOnline() -> "在线"
+            connected -> "等待心跳"
+            failure != null -> failure.kind.chip
+            else -> "连接中"
         }
 }
 

@@ -23,6 +23,16 @@ data class PushGoPullItem(
 )
 
 /**
+ * 网关回了业务错误。
+ *
+ * 单独成型是为了让界面能按 `code` / `detail` 判类别（密码错、频道失效、网关 5xx），
+ * 而不是只拿到一句拼好的「PushGo HTTP 401：invalid password」去正则。
+ */
+class PushGoHttpException(val code: Int, val detail: String?) : IOException(
+    "PushGo HTTP $code" + (detail?.takeIf { it.isNotBlank() }?.let { "：$it" } ?: "")
+)
+
+/**
  * PushGo Gateway 的最小客户端：设备注册、FCM 路由（为 Pull 准备）、频道订阅、发送、Pull、ACK。
  * 这是 Pull 原型：消息通过 FCM 路由入队，但不依赖真实 FCM 送达，靠 /v2/messages/pull 拉取。
  */
@@ -147,7 +157,7 @@ class PushGoClient {
             if (!response.isSuccessful || !success) {
                 val error = (parsed?.get("error") as? JsonPrimitive)?.contentOrNull
                     ?: ((parsed?.get("problem") as? JsonObject)?.get("detail") as? JsonPrimitive)?.contentOrNull
-                throw IOException("PushGo HTTP ${response.code}${error?.let { "：$it" } ?: ""}")
+                throw PushGoHttpException(response.code, error)
             }
             return (parsed?.get("data") as? JsonObject) ?: buildJsonObject {}
         }

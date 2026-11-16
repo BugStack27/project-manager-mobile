@@ -38,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.journeyapps.barcodescanner.ScanContract
@@ -46,6 +47,7 @@ import com.projectmanager.mobile.core.ConnectInfo
 import com.projectmanager.mobile.core.Protocol
 import com.projectmanager.mobile.data.ConnectionRecord
 import com.projectmanager.mobile.data.ConnectionRuntime
+import com.projectmanager.mobile.data.LinkFailureKind
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -77,6 +79,16 @@ fun ConnectionDetailScreen(
         }
     }
 
+    val startScan: () -> Unit = {
+        val options = ScanOptions().apply {
+            setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+            setPrompt("扫描新的连接二维码")
+            setBeepEnabled(false)
+            setOrientationLocked(false)
+        }
+        scanLauncher.launch(options)
+    }
+
     Column(
         Modifier
             .fillMaxSize()
@@ -90,9 +102,12 @@ fun ConnectionDetailScreen(
                 .padding(bottom = 24.dp)
         ) {
             val online = runtime?.desktopOnline() == true
+            val advice = runtime?.adviceKind
+            val danger = advice?.needsRescan == true
             val statusColor = when {
                 online -> successColor()
                 runtime == null -> MaterialTheme.colorScheme.outline
+                danger -> MaterialTheme.colorScheme.error
                 else -> warningColor()
             }
             Column(
@@ -111,8 +126,7 @@ fun ConnectionDetailScreen(
                         when {
                             online -> "桌面端在线"
                             runtime == null -> "连接中…"
-                            runtime.connected -> "已连接，等待桌面端心跳"
-                            else -> "连接已断开，正在重连"
+                            else -> runtime.statusText
                         },
                         fontSize = 17.sp,
                         fontWeight = FontWeight.SemiBold
@@ -124,6 +138,15 @@ fun ConnectionDetailScreen(
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                if (advice != null) {
+                    Spacer(Modifier.height(12.dp))
+                    FailureNote(
+                        advice = advice,
+                        detail = runtime?.failure?.detail,
+                        retrying = runtime?.reconnectAt != null,
+                        onRescan = startScan
+                    )
+                }
                 Spacer(Modifier.height(14.dp))
                 Row(
                     Modifier
@@ -159,15 +182,7 @@ fun ConnectionDetailScreen(
                 icon = Icons.Outlined.QrCodeScanner,
                 title = "重新扫码",
                 subtitle = "覆盖此连接的频道与密码",
-                onClick = {
-                    val options = ScanOptions().apply {
-                        setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-                        setPrompt("扫描新的连接二维码")
-                        setBeepEnabled(false)
-                        setOrientationLocked(false)
-                    }
-                    scanLauncher.launch(options)
-                }
+                onClick = startScan
             )
             ActionRow(
                 icon = Icons.Outlined.Delete,
@@ -251,6 +266,50 @@ fun ConnectionDetailScreen(
         )
     }
 }
+/**
+ * 失败说明：告诉用户「为什么连不上、下一步做什么」。
+ * 传输层原文只在最后一行小字露出，方便对日志；需要重新扫码的类别直接给按钮，不必滚到下面的操作区。
+ */
+@Composable
+private fun FailureNote(
+    advice: LinkFailureKind,
+    detail: String?,
+    retrying: Boolean,
+    onRescan: () -> Unit
+) {
+    val accent = if (advice.needsRescan) MaterialTheme.colorScheme.error else warningColor()
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(accent.copy(alpha = 0.10f))
+            .padding(horizontal = 13.dp, vertical = 12.dp)
+    ) {
+        Text(advice.hint, fontSize = 12.5.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurface)
+        if (!detail.isNullOrBlank()) {
+            Spacer(Modifier.height(5.dp))
+            Text(
+                detail,
+                fontSize = 11.sp,
+                lineHeight = 15.sp,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+            )
+        }
+        if (advice.needsRescan) {
+            Spacer(Modifier.height(4.dp))
+            TextButton(onClick = onRescan, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp, vertical = 2.dp)) {
+                Text("重新扫码", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = accent)
+            }
+        } else if (retrying) {
+            Spacer(Modifier.height(5.dp))
+            Text("正在自动重试…", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f))
+        }
+    }
+}
+
 @Composable
 private fun Metric(value: String, label: String, modifier: Modifier = Modifier) {
     Column(modifier) {

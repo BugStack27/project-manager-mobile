@@ -1,5 +1,6 @@
 package com.projectmanager.mobile.data
 
+import com.projectmanager.mobile.core.Protocol
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
@@ -370,6 +371,12 @@ data class RemoteTicket(
     val payload: RemoteTicketPayload = RemoteTicketPayload()
 ) {
     val isReview: Boolean get() = type == "review"
+
+    /** 与 [PendingItem.isExpired] 同一判据：用于提醒前先掐掉早已过期的提问 */
+    fun isExpired(now: Long = System.currentTimeMillis()): Boolean {
+        val exp = Protocol.parseTime(payload.expiresAt) ?: return false
+        return exp <= now
+    }
 }
 
 @Serializable

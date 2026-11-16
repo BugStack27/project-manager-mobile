@@ -92,7 +92,7 @@ fun AppRoot(
             if (showTabs) {
                 BottomTabs(
                     selected = route ?: "todos",
-                    todoCount = state.items.count { it.sentAt == null },
+                    todoCount = state.items.count { it.isActionable() },
                     remoteCount = remoteState.pendingCount,
                     onSelect = { destination ->
                         navController.navigate(destination) {

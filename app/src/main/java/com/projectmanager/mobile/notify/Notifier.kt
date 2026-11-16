@@ -33,6 +33,9 @@ class Notifier(
 ) {
     private val manager = NotificationManagerCompat.from(context)
 
+    /** 上一次汇总通知的条目指纹：集合没变就不重复重建（服务每轮轮询都会来对账） */
+    private var lastSummarySignature: String? = null
+
     fun ensureChannels() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
@@ -108,6 +111,8 @@ class Notifier(
     fun notifyItem(item: PendingItem, connection: ConnectionRecord) {
         if (!repo.settings.notificationsEnabled) return
         if (!manager.areNotificationsEnabled()) return
+        // 过期提问点开也提交不了，不值得再响一次铃（离线补拉时最容易撞上）
+        if (item.isExpired()) return
         if (repo.isNotified(item.key)) return
 
         repo.markNotified(listOf(item.key))
@@ -175,6 +180,7 @@ class Notifier(
     }
 
     fun cancelAllTodos() {
+        lastSummarySignature = null
         repo.items.forEach { item ->
             try {
                 manager.cancel(notificationId(item))
@@ -188,14 +194,29 @@ class Notifier(
     }
 
     fun updateSummary() {
-        val items = repo.items.filter { it.sentAt == null }
+        val now = System.currentTimeMillis()
+        // 已经过期、还挂在通知栏里的条目：撤掉，免得点开发现提交不了（列表里仍留着灰显）
+        repo.items.filter { it.sentAt == null && it.isExpired(now) }.forEach { item ->
+            try {
+                manager.cancel(notificationId(item))
+            } catch (_: Exception) {
+            }
+        }
+
+        // 角标只数「还能处理」的条目：过期的那部分留着也只是摆设
+        val items = repo.items.filter { it.isActionable(now) }
         if (!repo.settings.notificationsEnabled || items.isEmpty() || !manager.areNotificationsEnabled()) {
+            lastSummarySignature = null
             try {
                 manager.cancel(SUMMARY_ID)
             } catch (_: Exception) {
             }
             return
         }
+        // 条目集合没变就不重建：服务每轮长轮询都会来对一次账，重复 notify 只是白耗电
+        val signature = items.map { it.key }.sorted().joinToString("|")
+        if (signature == lastSummarySignature) return
+        lastSummarySignature = signature
         val connections = items.map { it.connId }.distinct().size
         val title = "${items.size} 条待办 · ${connections} 台桌面端"
         val lines = items.sortedByDescending { it.lastPushedAt }.take(5).map { it.title }

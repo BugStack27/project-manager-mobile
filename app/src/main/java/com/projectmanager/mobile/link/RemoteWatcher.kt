@@ -59,6 +59,8 @@ class RemoteWatcher(
                 // 先落库再提醒：通知点进去要有对应的条目，顺序反了会点开空白
                 val fresh = repo.syncRemoteTickets(res.messages.map { it.toPendingItem() })
                 announce(res.messages, fresh.map { it.messageId }.toSet())
+                // 过期是按时间变化的：每轮顺手对一次账，把刚过期的条目从角标里摘掉
+                notifier.updateSummary()
             } catch (e: Exception) {
                 // 地址失效、桌面端关了、隧道重建中：都按「稍后再试」处理，不打扰用户
                 delay(backoff)
@@ -70,12 +72,16 @@ class RemoteWatcher(
     /**
      * 只提醒「这一轮新出现、且历史上没提醒过」的待办。
      * 已提醒集合落盘，所以进程被杀后重开：积压的旧待办补一次通知，不会每轮重放。
+     *
+     * 离线一段时间恢复后，队列里常夹着早已过期的提问：这些点开也提交不了，直接跳过不响铃。
      */
     private fun announce(tickets: List<RemoteTicket>, freshIds: Set<String>) {
         if (freshIds.isEmpty()) return
+        val now = System.currentTimeMillis()
         val newly = ArrayList<String>(freshIds.size)
         for (t in tickets) {
             if (t.id.isBlank() || t.id !in freshIds) continue
+            if (t.isExpired(now)) continue
             if (repo.isRemoteNotified(t.id)) continue
             newly.add(t.id)
             notifier.notifyRemote(

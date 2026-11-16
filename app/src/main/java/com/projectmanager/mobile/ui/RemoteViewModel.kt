@@ -41,7 +41,12 @@ data class RemoteState(
     val lastSyncAt: Long? = null
 ) {
     val ready: Boolean get() = config.ready
-    val pendingCount: Int get() = tickets.size
+    /** 项目页角标：过期提问已经答不了了，不该继续算在「待处理」里 */
+    val pendingCount: Int
+        get() {
+            val now = System.currentTimeMillis()
+            return tickets.count { !it.isExpired(now) }
+        }
 }
 
 class RemoteViewModel(private val app: PmApp) : ViewModel() {

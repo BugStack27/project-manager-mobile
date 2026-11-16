@@ -65,6 +65,15 @@ data class PendingItem(
         return exp <= now
     }
 
+    /**
+     * 还能处理的待办：未提交且没过期。
+     *
+     * 提醒与角标都按这个口径统计 —— 过期提问点开也提交不了，再响铃只是打扰，
+     * 计入角标也让「还有几件事要做」失真。列表仍按 [isExpired] 把它们留在原位灰显。
+     */
+    fun isActionable(now: Long = System.currentTimeMillis()): Boolean =
+        sentAt == null && !isExpired(now)
+
     fun sourceLabel(connectionName: String): String {
         val proj = projectName.ifEmpty { "未命名项目" }
         return if (seq != null) "$connectionName · $proj #$seq" else "$connectionName · $proj"

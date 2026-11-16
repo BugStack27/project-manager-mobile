@@ -38,5 +38,5 @@ class PmApp : Application() {
 class AppContainer(context: Context) {
     val repo: AppRepository = AppRepository(SecureStore(context))
     val notifier: Notifier = Notifier(context, repo)
-    val linkManager: LinkManager = LinkManager(context, repo, notifier)
+    val linkManager: LinkManager = LinkManager(context, repo)
 }

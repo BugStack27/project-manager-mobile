@@ -353,6 +353,7 @@ data class RemoteTicketPayload(
     val agent: String = "",
     val agentName: String = "",
     val note: String = "",
+    val completedAt: String? = null,
     val questionId: String = "",
     val text: String = "",
     val options: List<String> = emptyList(),

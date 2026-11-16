@@ -90,7 +90,6 @@ fun ConnectionDetailScreen(
                 .padding(bottom = 24.dp)
         ) {
             val online = runtime?.desktopOnline() == true
-            val pushgo = connection.isPushGo
             val statusColor = when {
                 online -> successColor()
                 runtime == null -> MaterialTheme.colorScheme.outline
@@ -112,7 +111,7 @@ fun ConnectionDetailScreen(
                         when {
                             online -> "桌面端在线"
                             runtime == null -> "连接中…"
-                            runtime.connected -> if (pushgo) "已连接 PushGo，等待桌面端心跳" else "已连接 ntfy，等待桌面端心跳"
+                            runtime.connected -> "已连接，等待桌面端心跳"
                             else -> "连接已断开，正在重连"
                         },
                         fontSize = 17.sp,
@@ -144,8 +143,8 @@ fun ConnectionDetailScreen(
             }
 
             DetailGroup("会话")
-            DetailRow(if (pushgo) "PushGo 网关" else "ntfy 服务器", connection.server, mono = true)
-            DetailRow(if (pushgo) "频道" else "topic", connection.maskedTopic(), mono = true)
+            DetailRow("网关", connection.server, mono = true)
+            DetailRow("频道", connection.maskedTopic(), mono = true)
             DetailRow("会话建立", SimpleDateFormat("M月d日 HH:mm", Locale.CHINA).format(Date(connection.addedAt)))
             DetailRow("后台接收", if (foreground) "前台服务运行中" else "未运行", valueColor = if (foreground) successColor() else warningColor())
 
@@ -159,7 +158,7 @@ fun ConnectionDetailScreen(
             ActionRow(
                 icon = Icons.Outlined.QrCodeScanner,
                 title = "重新扫码",
-                subtitle = if (pushgo) "覆盖此连接的频道与密码" else "覆盖此连接的 topic 与 key",
+                subtitle = "覆盖此连接的频道与密码",
                 onClick = {
                     val options = ScanOptions().apply {
                         setDesiredBarcodeFormats(ScanOptions.QR_CODE)
@@ -237,8 +236,7 @@ fun ConnectionDetailScreen(
             title = { Text("更新 ${connection.name} 的会话？") },
             text = {
                 Text(
-                    if (connection.isPushGo) "将用新二维码里的 PushGo 频道与密码覆盖这一台桌面端；旧频道上的待办会失效，其他连接不受影响。"
-                    else "将用新二维码里的 topic / key 覆盖这一台桌面端；旧会话上的待办会失效，其他连接不受影响。"
+                    "将用新二维码里的频道与密码覆盖这一台桌面端；旧频道会失效，其他连接不受影响。"
                 )
             },
             confirmButton = {

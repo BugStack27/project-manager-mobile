@@ -453,7 +453,6 @@ fun ConnectionsScreen(
             initial = nameDraft,
             server = pendingInfo!!.server,
             topic = pendingInfo!!.topic,
-            provider = pendingInfo!!.provider,
             onCancel = { pendingInfo = null },
             onConfirm = { name ->
                 val info = pendingInfo
@@ -637,20 +636,17 @@ private fun NameConnectionDialog(
     initial: String,
     server: String,
     topic: String,
-    provider: String,
     onCancel: () -> Unit,
     onConfirm: (String) -> Unit
 ) {
     var name by remember { mutableStateOf(initial) }
-    val pushgo = provider == "pushgo"
     AlertDialog(
         onDismissRequest = onCancel,
         title = { Text("命名这台桌面端") },
         text = {
             Column {
                 Text(
-                    if (pushgo) "PushGo 频道已识别，名称只在本机显示，之后可以随时重命名。"
-                    else "只在本机显示，用来区分多台桌面端；之后可以随时重命名。",
+                    "频道已识别，名称只在本机显示，之后可以随时重命名。",
                     fontSize = 12.5.sp,
                     lineHeight = 18.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -665,7 +661,7 @@ private fun NameConnectionDialog(
                 Spacer(Modifier.height(8.dp))
                 Text(
                     buildString {
-                        append(if (pushgo) "PushGo · " else "ntfy · ")
+                        append("网关 ")
                         append(server)
                         append(" · ")
                         append(if (topic.length > 12) topic.take(6) + "••••" + topic.takeLast(4) else topic)
@@ -698,7 +694,7 @@ private fun ManualConnectDialog(
         text = {
             Column {
                 Text(
-                    "粘贴桌面端二维码里的整段 JSON（支持 Pull 版 PushGo 与旧版 ntfy 连接信息）。",
+                    "粘贴桌面端二维码里的整段 JSON（v2 接入点信息）。",
                     fontSize = 12.5.sp,
                     lineHeight = 18.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant

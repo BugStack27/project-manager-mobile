@@ -38,6 +38,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.projectmanager.mobile.PmApp
+import com.projectmanager.mobile.data.REMOTE_CONN_ID
 import kotlinx.coroutines.flow.StateFlow
 
 data class OpenTarget(val connId: String, val messageId: String)
@@ -185,7 +186,8 @@ fun AppRoot(
                 val connId = entry.arguments?.getString("connId").orEmpty()
                 val messageId = entry.arguments?.getString("messageId").orEmpty()
                 val item = state.items.firstOrNull { it.connId == connId && it.messageId == messageId }
-                val connectionName = state.connections.firstOrNull { it.id == connId }?.name ?: "已移除的连接"
+                val connectionName = state.connections.firstOrNull { it.id == connId }?.name
+                    ?: if (connId == REMOTE_CONN_ID) "桌面端" else "已移除的连接"
                 ItemScreen(
                     item = item,
                     connectionName = connectionName,

@@ -1,17 +1,16 @@
 # 项目管理台 · 手机端
 
-Android + Jetpack Compose 客户端：通过 **PushGo（Pull 原型）** 或旧版 ntfy 连接一台或多台桌面端「项目管理器」，接收待审核与提问，在手机上通过 / 打回 / 拒绝 / 回答，答案加密回传。
+Android + Jetpack Compose 客户端：配对一台或多台桌面端「项目管理器」，通过桌面端的 `/remote` 接口长轮询取待办，在手机上通过 / 打回 / 拒绝 / 回答。PushGo 只负责把接入点（隧道地址 + 令牌）送到手机上，不承载审批内容。
 
 - PushGo 协议见参考项目 `D:\job\peoject-manager\doc\pushgo-link.md`（本版桌面端默认使用）。
-- 旧 ntfy 协议见 `D:\job\peoject-manager\doc\mobile-link.md`（手机端仍兼容 v1 连接信息）。
 
 ## 功能
 
-- **多连接**：每台桌面端一条独立连接；PushGo 连接有独立网关 / 频道 / 密码，ntfy 连接有独立 server / topic / key；待办聚合展示并标注来源，可按连接筛选。
+- **多连接**：每台桌面端一条独立连接，各有独立频道与密码；接入点由桌面端随心跳下发，无需手填。
 - **PushGo Pull**：设备注册 + 频道订阅，每 15 秒 Pull/ACK；单条 32 KB，公共网关无每日条数（受每分钟频率限制）。当前为 Pull 原型，最多 15 秒延迟。
 - **扫码接入**：扫桌面端二维码，或手动粘贴连接信息；本地命名、重命名、重新扫码、移除。
 - **审核与提问**：通过 / 打回（意见必填）/ 拒绝；候选答案 + 自定义输入 + 倒计时与过期态。
-- **后台保活**：前台服务持有全部连接（ntfy 长连接 / PushGo 轮询），断网指数退避重连，网络恢复立即重连；开机解锁后自动恢复。
+- **后台保活**：前台服务持有长轮询（`RemoteWatcher`）与接入点通道，断网指数退避重连，网络恢复立即重连；开机解锁后自动恢复。
 - **通知**：新审核 / 新提问各发一条，同一消息只提醒一次；汇总通知「N 条待办 · M 台桌面端」；点击直达对应条目。
 - **端到端加密**：PBKDF2-HMAC-SHA256 派生 + AES-256-GCM，AAD 绑定 topic / 频道 ID；连接密钥存 EncryptedSharedPreferences。
 
@@ -94,7 +93,7 @@ node tools/mobile-peer.mjs --name 工作电脑
 app/src/main/java/com/projectmanager/mobile/
   core/        协议常量、加解密、连接信息校验、Intent 常量
   data/        连接与待办模型、加密存储、仓库与去重
-  link/        ntfy 订阅 / 发布、PushGo 设备 / 频道 / Pull / ACK、多连接会话、答案重发
+  link/        PushGo 频道与设备注册、接入点心跳、远程待办长轮询（RemoteWatcher）
   notify/      通知渠道、条目通知与汇总
   service/     前台服务、开机恢复
   ui/          Compose 页面、主题、ViewModel
@@ -107,6 +106,6 @@ design/                  高保真原型与截图
 
 - PushGo Pull 原型最多 15 秒延迟；设备路由使用随机 provider token 进入 Pull 队列，`send_status` 可能显示 `partially_failed`；正式版建议切 PushGo 私有 WSS 或自建 Gateway。
 - 公共 PushGo 网关没有每日条数额度，但受每分钟请求频率限制；本项目 15 秒轮询 + 每分钟心跳约 10 次/分钟，远低于限制。
-- ntfy 公共服单条消息 4 KB、每天 250 条；本版桌面端已改用 PushGo，旧 ntfy 连接仅保留兼容。
+
 - 手机端只处理「待审核」与「待回答」，不提供需求创建、历史记录、diff 查看。
 - 通知权限被拒绝时，待办仍会同步到列表，但不会有系统通知。

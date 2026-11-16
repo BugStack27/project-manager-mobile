@@ -71,22 +71,10 @@ class ProtocolTest {
     }
 
     @Test
-    fun `connect info validates fields`() {
-        val good = """{"v":1,"type":"pm-mobile","server":"https://ntfy.sh","topic":"$topic","key":"$key"}"""
-        val info = Protocol.parseConnectInfo(good)
-        assertNotNull(info)
-        assertEquals("https://ntfy.sh", info!!.server)
-
-        assertNull(Protocol.parseConnectInfo(good.replace("\"pm-mobile\"", "\"other\"")))
-        assertNull(Protocol.parseConnectInfo(good.replace(topic, "pm-UPPER")))
-        assertNull(Protocol.parseConnectInfo(good.replace("https://ntfy.sh", "ftp://ntfy.sh")))
-        assertNull(Protocol.parseConnectInfo(good.replace(key, "short")))
-    }
-
-    @Test
-    fun `connect info strips trailing slashes`() {
-        val good = """{"v":1,"type":"pm-mobile","server":"https://ntfy.sh///","topic":"$topic","key":"$key"}"""
-        assertEquals("https://ntfy.sh", Protocol.parseConnectInfo(good)?.server)
+    fun `v1 ntfy connect info is rejected`() {
+        // v1（ntfy）已经停用：扫到旧二维码必须拒绝，而不是当成可用接入点
+        val legacy = """{"v":1,"type":"pm-mobile","server":"https://ntfy.sh","topic":"$topic","key":"$key"}"""
+        assertNull(Protocol.parseConnectInfo(legacy))
     }
 
     @Test

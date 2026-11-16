@@ -12,6 +12,7 @@ import androidx.core.app.ServiceCompat
 import com.projectmanager.mobile.PmApp
 import com.projectmanager.mobile.data.AppRepository
 import com.projectmanager.mobile.link.LinkManager
+import com.projectmanager.mobile.link.RemoteWatcher
 import com.projectmanager.mobile.notify.Notifier
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -31,6 +32,7 @@ class MobileLinkService : Service() {
     private lateinit var repo: AppRepository
     private lateinit var linkManager: LinkManager
     private lateinit var notifier: Notifier
+    private lateinit var remoteWatcher: RemoteWatcher
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var notificationJob: Job? = null
@@ -43,10 +45,13 @@ class MobileLinkService : Service() {
         repo = container.repo
         linkManager = container.linkManager
         notifier = container.notifier
+        remoteWatcher = RemoteWatcher(repo, notifier)
 
         // 先拉起接收链路：即使这次进不了前台（后台被系统重启时可能被拒），
         // 服务仍能立刻补拉一轮并补发通知，而不是整个后台接收直接停摆。
         linkManager.start()
+        // 远程面（HTTP 长轮询）与 PushGo 同生命周期：界面被回收后，这条通道仍然收得到待办
+        remoteWatcher.start(scope)
         holdCpuAwake()
         notifier.updateSummary()
         enterForeground()
@@ -73,6 +78,7 @@ class MobileLinkService : Service() {
 
     override fun onDestroy() {
         notificationJob?.cancel()
+        remoteWatcher.stop()
         scope.cancel()
         releaseCpuAwake()
         linkManager.setForeground(false)

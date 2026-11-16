@@ -170,7 +170,8 @@ object Protocol {
             val type = obj["type"]?.jsonPrimitive?.content
             if (type != "pm-mobile") return null
 
-            val provider = obj["provider"]?.jsonPrimitive?.content?.trim()?.lowercase() ?: "ntfy"
+            // 只认 v2 / pushgo：v1（ntfy）那套订阅协议已经停用，扫旧码应当直接拒绝
+            val provider = obj["provider"]?.jsonPrimitive?.content?.trim()?.lowercase() ?: ""
             if (version == 2 && provider == "pushgo") {
                 val gateway = obj["gateway"]?.jsonPrimitive?.content?.trim()?.trimEnd('/')
                 val channel = obj["channel"]?.jsonPrimitive?.content?.trim()
@@ -190,18 +191,7 @@ object Protocol {
                 )
             }
 
-            if (version != 1 || provider != "ntfy") return null
-            val rawServer = obj["server"]?.jsonPrimitive?.content?.trim()?.trimEnd('/')
-            val topic = obj["topic"]?.jsonPrimitive?.content
-            val key = obj["key"]?.jsonPrimitive?.content
-            if (rawServer.isNullOrEmpty() || rawServer.length > 300) return null
-            if (topic == null || key == null) return null
-            if (!isValidTopic(topic) || !isValidKey(key)) return null
-
-            val url = URL(rawServer)
-            if (url.protocol != "http" && url.protocol != "https") return null
-            if (url.host.isNullOrEmpty()) return null
-            ConnectInfo(provider = "ntfy", server = rawServer, topic = topic, key = key)
+            null
         } catch (_: Exception) {
             null
         }
@@ -223,5 +213,5 @@ data class ConnectInfo(
     val server: String,
     val topic: String,
     val key: String,
-    val provider: String = "ntfy"
+    val provider: String = "pushgo"
 )

@@ -12,13 +12,11 @@ data class ConnectionRecord(
     val topic: String,
     val key: String,
     val addedAt: Long = System.currentTimeMillis(),
-    /** ntfy（v1 连接信息）或 pushgo（v2 连接信息） */
-    val provider: String = "ntfy",
+    /** 只剩 pushgo；字段保留是为了老存档还能解码（v1 的 ntfy 已停用） */
+    val provider: String = "pushgo",
     val deviceKey: String? = null,
     val providerToken: String? = null
 ) {
-    val isPushGo: Boolean get() = provider == "pushgo"
-
     val host: String
         get() = runCatching { URL(server).host }.getOrNull().orEmpty().ifEmpty { server }
 
@@ -97,11 +95,16 @@ data class RemoteConfig(
     fun normalized(): RemoteConfig = copy(baseUrl = baseUrl.trim().trimEnd('/'), token = token.trim())
 }
 
+/** 远程待办在本地使用的固定连接 id：待办页与详情页据此判断「这条要走 HTTP 提交」 */
+const val REMOTE_CONN_ID = "remote"
+
 @Serializable
 data class StoreSnapshot(
     val connections: List<ConnectionRecord> = emptyList(),
     val items: List<PendingItem> = emptyList(),
     val notified: List<String> = emptyList(),
+    /** 远程待办已经提醒过的 id：落盘才能在进程被杀后「重开即补」而不重复轰炸 */
+    val remoteNotified: List<String> = emptyList(),
     val settings: AppSettings = AppSettings(),
     /** 老版本的存档没有这一块：靠默认值补上，不必迁移 */
     val remote: RemoteConfig = RemoteConfig()
@@ -122,7 +125,7 @@ data class ConnectionRuntime(
     val statusText: String
         get() = when {
             connected && desktopOnline() -> "在线"
-            connected -> "已连接 ntfy · 桌面端暂无心跳"
+            connected -> "已连接 · 等待桌面端心跳"
             lastError != null -> "重连中"
             else -> "连接中…"
         }
@@ -132,4 +135,33 @@ data class UpsertResult(
     val item: PendingItem,
     val isNew: Boolean,
     val needsResend: Boolean
+)
+
+
+/**
+ * 远程待办 → 本地待办模型。
+ *
+ * 待办页与详情页都是按 PendingItem 写的，这里做一次映射就能复用整套 UI；
+ * connId 用固定的 [REMOTE_CONN_ID]，提交时据此改走 /remote 而不是老的消息通道。
+ */
+fun RemoteTicket.toPendingItem(): PendingItem = PendingItem(
+    connId = REMOTE_CONN_ID,
+    messageId = id,
+    kind = if (isReview) ItemKind.REVIEW else ItemKind.QUESTION,
+    requirementId = payload.requirementId,
+    seq = payload.seq,
+    title = payload.title,
+    projectName = payload.projectName,
+    agent = payload.agent,
+    agentName = payload.agentName,
+    note = payload.note,
+    completedAt = payload.completedAt ?: if (isReview) at else null,
+    questionId = payload.questionId.ifBlank { null },
+    questionText = payload.text,
+    options = payload.options,
+    defaultAnswer = payload.default,
+    expiresAt = payload.expiresAt,
+    at = at,
+    receivedAt = System.currentTimeMillis(),
+    lastPushedAt = System.currentTimeMillis()
 )

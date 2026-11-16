@@ -253,6 +253,46 @@ class AppRepository(private val store: SecureStore) {
         update(_snapshot.value.copy(remote = config.normalized()))
     }
 
+    /**
+     * 用一轮长轮询的结果整体替换远程待办。
+     *
+     * 整体替换而不是增量合并：服务端返回的就是「当前所有待办」，其中消失的那些已经处理完了。
+     * 本地的答复状态（已提交 / 失败原因）按 messageId 继承，避免重拉把「刚点过通过」的痕迹冲掉。
+     */
+    @Synchronized
+    fun syncRemoteTickets(incoming: List<PendingItem>): List<PendingItem> {
+        val current = _snapshot.value
+        val existing = current.items.filter { it.connId == REMOTE_CONN_ID }.associateBy { it.messageId }
+        val merged = incoming.map { fresh ->
+            val old = existing[fresh.messageId]
+            if (old == null) {
+                fresh
+            } else {
+                fresh.copy(
+                    answeredDecision = old.answeredDecision,
+                    answerText = old.answerText,
+                    answerId = old.answerId,
+                    sentAt = old.sentAt,
+                    answerError = old.answerError
+                )
+            }
+        }
+        val fresh = merged.filter { existing[it.messageId] == null }
+        val untouched = current.items.filter { it.connId != REMOTE_CONN_ID }
+        update(current.copy(items = untouched + merged))
+        return fresh
+    }
+
+    fun isRemoteNotified(id: String): Boolean = _snapshot.value.remoteNotified.contains(id)
+
+    @Synchronized
+    fun markRemoteNotified(ids: Collection<String>) {
+        if (ids.isEmpty()) return
+        val current = _snapshot.value
+        val merged = (current.remoteNotified + ids).distinct().takeLast(500)
+        update(current.copy(remoteNotified = merged))
+    }
+
     fun findItem(connId: String, messageId: String): PendingItem? =
         items.firstOrNull { it.connId == connId && it.messageId == messageId }
 

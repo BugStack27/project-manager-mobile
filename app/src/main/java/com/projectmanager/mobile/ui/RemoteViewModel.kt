@@ -47,13 +47,10 @@ data class RemoteState(
 class RemoteViewModel(private val app: PmApp) : ViewModel() {
 
     private val repo = app.container.repo
-    private val notifier = app.container.notifier
 
     private val _state = MutableStateFlow(RemoteState(config = repo.snapshot.value.remote))
     val state: StateFlow<RemoteState> = _state.asStateFlow()
 
-    /** 已经弹过通知的待办 id：长轮询会反复拿到同一批，只提醒新增的 */
-    private val notified = mutableSetOf<String>()
     private var pollJob: Job? = null
     private var loadedProject: String = ""
 
@@ -105,7 +102,6 @@ class RemoteViewModel(private val app: PmApp) : ViewModel() {
                             lastSyncAt = System.currentTimeMillis()
                         )
                     }
-                    announce(res.messages)
                 } catch (e: Exception) {
                     _state.update { it.copy(online = false, error = e.message ?: "同步失败") }
                     delay(5_000)
@@ -114,29 +110,11 @@ class RemoteViewModel(private val app: PmApp) : ViewModel() {
         }
     }
 
-    private fun announce(tickets: List<RemoteTicket>) {
-        for (t in tickets) {
-            if (t.id.isEmpty() || notified.contains(t.id)) continue
-            notified.add(t.id)
-            notifier.notifyRemote(
-                ticketId = t.id,
-                title = if (t.isReview) "待审核 · ${t.payload.projectName.ifBlank { "桌面端" }}" else "待回答 · ${t.payload.projectName.ifBlank { "桌面端" }}",
-                body = buildString {
-                    if (t.payload.seq != null) append("#${t.payload.seq} ")
-                    append(t.payload.title)
-                    val detail = if (t.isReview) t.payload.note else t.payload.text
-                    if (detail.isNotBlank()) append("\n\n").append(detail)
-                }
-            )
-        }
-    }
-
     fun saveConfig(baseUrl: String, token: String) {
         repo.updateRemote(RemoteConfig(baseUrl = baseUrl, token = token, updatedAt = System.currentTimeMillis()))
     }
 
     fun clearConfig() {
-        notified.clear()
         repo.updateRemote(RemoteConfig())
     }
 

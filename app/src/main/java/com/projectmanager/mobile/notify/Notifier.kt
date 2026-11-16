@@ -21,6 +21,7 @@ import com.projectmanager.mobile.data.AppRepository
 import com.projectmanager.mobile.data.ConnectionRecord
 import com.projectmanager.mobile.data.ItemKind
 import com.projectmanager.mobile.data.PendingItem
+import com.projectmanager.mobile.data.REMOTE_CONN_ID
 
 /**
  * 通知是手机端的主要入口：新审核 / 新提问各发一条，同一消息 id 只提醒一次；
@@ -40,7 +41,7 @@ class Notifier(
             "后台接收",
             NotificationManager.IMPORTANCE_LOW
         ).apply {
-            description = "保持与多台桌面端的 ntfy 连接"
+            description = "接收待办提醒并保持与桌面端的连接"
             setShowBadge(false)
         }
         val todo = NotificationChannel(
@@ -144,7 +145,7 @@ class Notifier(
      * 与 PushGo 那条通道各自提醒、各自去重：可能同一条待办两条路都收到，但提醒内容一致、
      * 点进去都是同一个需求，重复弹一次比漏掉强。id 用待办指纹，重启后同一条不会重复提醒。
      */
-    fun notifyRemote(ticketId: String, title: String, body: String) {
+    fun notifyRemote(ticketId: String, messageId: String, title: String, body: String) {
         if (!repo.settings.notificationsEnabled) return
         if (!manager.areNotificationsEnabled()) return
         val builder = NotificationCompat.Builder(context, TODO_CHANNEL)
@@ -157,7 +158,8 @@ class Notifier(
             .setAutoCancel(true)
             .setOnlyAlertOnce(true)
             .setGroup(GROUP_TODO)
-            .setContentIntent(openAppIntent(ticketId.hashCode()))
+            // 点通知直接进详情：与老通道同一条深链，connId 固定 remote
+            .setContentIntent(openItemIntent(REMOTE_CONN_ID, messageId))
         try {
             manager.notify(ticketId.hashCode(), builder.build())
         } catch (e: SecurityException) {
@@ -237,16 +239,20 @@ class Notifier(
         return if (id == SUMMARY_ID) id + 1 else id
     }
 
-    private fun openItemIntent(item: PendingItem): PendingIntent {
+    private fun openItemIntent(item: PendingItem): PendingIntent =
+        openItemIntent(item.connId, item.messageId)
+
+    private fun openItemIntent(connId: String, messageId: String): PendingIntent {
         val intent = Intent(context, MainActivity::class.java).apply {
             action = Intents.ACTION_OPEN_ITEM
-            putExtra(Intents.EXTRA_CONN_ID, item.connId)
-            putExtra(Intents.EXTRA_MESSAGE_ID, item.messageId)
+            putExtra(Intents.EXTRA_CONN_ID, connId)
+            putExtra(Intents.EXTRA_MESSAGE_ID, messageId)
             flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         return PendingIntent.getActivity(
             context,
-            notificationId(item),
+            // 请求码用两个 id 的稳定散列：不同待办点开各自的详情，不会复用同一个 PendingIntent
+            (connId + "|" + messageId).hashCode() and 0x7fffffff,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )

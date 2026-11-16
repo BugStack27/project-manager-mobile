@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -70,7 +71,11 @@ fun RemoteProjectsScreen(
     onRefresh: () -> Unit,
     onOpenProject: (RemoteProject) -> Unit
 ) {
-    Column(Modifier.fillMaxSize()) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+    ) {
         PageHeader(
             title = "项目",
             subtitle = when {

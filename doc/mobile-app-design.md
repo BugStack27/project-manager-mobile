@@ -252,6 +252,13 @@ description: 项目管理台手机端（Android + Compose，多桌面端连接�
 - 验证：`:app:compileDebugKotlin`、`:app:testDebugUnitTest` 通过；真机后台行为未在本轮复测（当前没有连接设备）。
 - 剩余限制：Doze 期间未加白的应用网络会被挂起，国产 ROM 还可能直接清理后台进程，这两项只能由用户在系统里放行（电池优化 / 自启动管理）。
 
+### 7. 通知权限「去开启」落到系统设置（2026-11-16）✅
+
+- 现象：系统里关掉通知后，「通知权限未开启」卡片的「去开启」在 Android 12 及以下点了没反应；Android 13+ 二次拒绝后也只是静默返回。
+- 定位：原实现只在 `SDK >= 33` 且未授权时调一次 `RequestPermission` launcher。12 及以下根本没有这个运行时权限，整个分支被跳过；13+ 二次拒绝（或勾了不再询问）后系统不再弹框，`launch` 静默返回 false。
+- 实现：新增 `notify/NotificationAccess.kt`——`decide()` 按「SDK、运行时授权、应用通知是否开启、是否请求过、系统是否仍允许询问」给出三种动作（`RUNTIME_DIALOG` / `SYSTEM_SETTINGS` / `NONE`）；`openAppNotificationSettings()` 依次尝试应用通知设置页 → 应用详情页 → 系统设置首页；`openChannelNotificationSettings()` 供「提醒被系统静音」复用。`ConnectionsScreen` 的「去开启」按判定结果弹框或跳设置，被拒回调里弹「通知仍是关闭的」提示（可一键去设置）；`MainActivity` 启动时的自动请求记为「已请求过」，保证二次拒绝后第一次点「去开启」就能进设置页。
+- 验证：`:app:compileDebugKotlin`、`:app:testDebugUnitTest`（新增 `NotificationAccessTest` 6 组决策断言）、`:app:assembleDebug` 通过；无连接设备，真机点击路径未在本轮复测。
+
 ### 已知限制
 
 - 被用户「强行停止」后系统不会自动恢复服务（Android 限制）。

@@ -3,7 +3,6 @@ package com.projectmanager.mobile.ui
 import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
@@ -61,8 +60,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.ContextCompat
-import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -75,6 +72,9 @@ import com.projectmanager.mobile.core.Protocol
 import com.projectmanager.mobile.data.ConnectionRecord
 import com.projectmanager.mobile.data.ConnectionRuntime
 import com.projectmanager.mobile.notify.Notifier
+import com.projectmanager.mobile.notify.NotificationAccess
+import com.projectmanager.mobile.notify.NotificationPrompt
+import com.projectmanager.mobile.notify.findActivity
 
 @Composable
 fun ConnectionsScreen(
@@ -92,13 +92,14 @@ fun ConnectionsScreen(
     var showManual by remember { mutableStateOf(false) }
     var scanError by remember { mutableStateOf<String?>(null) }
     var notificationsAllowed by remember {
-        mutableStateOf(NotificationManagerCompat.from(context).areNotificationsEnabled())
+        mutableStateOf(NotificationAccess.isEnabled(context))
     }
     var alertMuted by remember { mutableStateOf(isAlertChannelMuted(context)) }
     var ignoringBattery by remember {
         mutableStateOf(isIgnoringBatteryOptimizations(context))
     }
     var showBatteryDialog by remember { mutableStateOf(false) }
+    var showDeniedHint by remember { mutableStateOf(false) }
 
     // 已有连接的用户（升级上来的）也要引导一次：后台收不到通知大多是电池优化拦了联网
     LaunchedEffect(state.connections.size, ignoringBattery, state.settings.batteryPromptShown) {
@@ -114,7 +115,7 @@ fun ConnectionsScreen(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                notificationsAllowed = NotificationManagerCompat.from(context).areNotificationsEnabled()
+                notificationsAllowed = NotificationAccess.isEnabled(context)
                 alertMuted = isAlertChannelMuted(context)
                 ignoringBattery = isIgnoringBatteryOptimizations(context)
             }
@@ -126,18 +127,28 @@ fun ConnectionsScreen(
     val notificationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        notificationsAllowed = NotificationManagerCompat.from(context).areNotificationsEnabled()
-        if (!granted) {
-            // 用户拒绝后仍可在系统设置里开启
-        }
+        notificationsAllowed = NotificationAccess.isEnabled(context)
+        // 用户拒绝、或系统根本没弹框（二次拒绝后 launch 会静默返回）时给出提示，
+        // 否则点「去开启」看起来毫无反应。
+        if (!granted && !notificationsAllowed) showDeniedHint = true
     }
 
     fun requestNotifications() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        val prompt = NotificationAccess.decide(
+            sdkInt = Build.VERSION.SDK_INT,
+            runtimeGranted = NotificationAccess.hasRuntimePermission(context),
+            notificationsEnabled = NotificationAccess.isEnabled(context),
+            asked = NotificationAccess.wasAsked(context),
+            canAsk = NotificationAccess.canAskAgain(context.findActivity())
+        )
+        when (prompt) {
+            NotificationPrompt.RUNTIME_DIALOG -> {
+                NotificationAccess.markAsked(context)
+                notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            // 12 及以下没有运行时权限，13+ 二次拒绝后系统也不再弹框：都跳到能真正开启通知的设置页。
+            NotificationPrompt.SYSTEM_SETTINGS -> NotificationAccess.openAppNotificationSettings(context)
+            NotificationPrompt.NONE -> notificationsAllowed = true
         }
     }
 
@@ -448,6 +459,27 @@ fun ConnectionsScreen(
         )
     }
 
+    if (showDeniedHint) {
+        AlertDialog(
+            onDismissRequest = { showDeniedHint = false },
+            title = { Text("通知仍是关闭的") },
+            text = {
+                Text(
+                    "系统不会再弹授权框了。到「设置 → 通知」里允许本项目发送通知，回到 App 后立即生效。"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDeniedHint = false
+                    NotificationAccess.openAppNotificationSettings(context)
+                }) { Text("去设置") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeniedHint = false }) { Text("知道了") }
+            }
+        )
+    }
+
     if (pendingInfo != null) {
         NameConnectionDialog(
             initial = nameDraft,
@@ -736,28 +768,7 @@ private fun isAlertChannelMuted(context: android.content.Context): Boolean =
     (context.applicationContext as? PmApp)?.container?.notifier?.isAlertChannelMuted() ?: false
 
 private fun openAlertChannelSettings(context: android.content.Context) {
-    try {
-        context.startActivity(
-            Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
-                .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                .putExtra(Settings.EXTRA_CHANNEL_ID, Notifier.TODO_CHANNEL)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        )
-    } catch (_: ActivityNotFoundException) {
-        openAppNotificationSettings(context)
-    } catch (_: Exception) {
-    }
-}
-
-private fun openAppNotificationSettings(context: android.content.Context) {
-    try {
-        context.startActivity(
-            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        )
-    } catch (_: Exception) {
-    }
+    NotificationAccess.openChannelNotificationSettings(context, Notifier.TODO_CHANNEL)
 }
 
 private fun requestIgnoreBattery(context: android.content.Context) {

@@ -11,6 +11,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import com.projectmanager.mobile.core.Intents
+import com.projectmanager.mobile.notify.NotificationAccess
 import com.projectmanager.mobile.ui.AppRoot
 import com.projectmanager.mobile.ui.OpenTarget
 import com.projectmanager.mobile.ui.PmTheme
@@ -75,6 +76,8 @@ class MainActivity : ComponentActivity() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
         ) {
+            // 记一次「已请求过」：二次拒绝后系统不再弹框，页面里的「去开启」据此直接跳系统设置
+            NotificationAccess.markAsked(this)
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }

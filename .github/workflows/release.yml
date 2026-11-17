@@ -111,14 +111,16 @@ jobs:
 
           if [ -z "$ID" ]; then
             echo "没有现存 Release，新建 $TAG"
+            # make_latest 是字符串枚举（true/false/legacy），必须用 -f 原样传字符，
+            # 用 -F 会被解析成布尔 true，GitHub 返回 422 "true is not a string"
             ID=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" \
                    -f tag_name="$TAG" -f name="$VER" -f body="$BODY" \
-                   -F draft=false -F make_latest=true --jq .id)
+                   -F draft=false -f make_latest=true --jq .id)
           else
             echo "复用 Release $ID，重新绑定 tag 并确保处于已发布状态"
             gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$ID" \
               -f tag_name="$TAG" -f name="$VER" -f body="$BODY" \
-              -F draft=false -F make_latest=true >/dev/null
+              -F draft=false -f make_latest=true >/dev/null
           fi
 
           # --clobber：重发同一版本时覆盖同名旧资产，不会卡在 422

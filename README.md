@@ -33,6 +33,7 @@
 - **后台保活** — 前台服务持有长轮询（`RemoteWatcher`）与接入点通道，断网指数退避重连，网络恢复立即重连；开机解锁后自动恢复。
 - **通知** — 新审核 / 新提问各发一条，汇总通知「N 条待办 · M 台桌面端」；点击直达对应条目；权限被拒时会引导到系统通知设置。
 - **连接诊断** — 连不上时直接说明原因（网络不通 / 密码错误 / 频道失效等），能靠重新扫码解决的就在原地给按钮。
+- **自动更新** — 启动时检查 GitHub Release（6 小时内最多一次），发现新版本在「连接」页顶部提示，一键下载并调起系统安装器；下载带 SHA-256 校验，连接与设置原样保留。
 - **端到端加密** — PBKDF2-HMAC-SHA256 派生 + AES-256-GCM，AAD 绑定 topic / 频道 ID；连接密钥存 EncryptedSharedPreferences。
 
 ## 页面
@@ -92,6 +93,16 @@ git push origin v0.0.2
   - `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD`
 - 本机签名打包：在根目录放 `keystore.properties`（`storeFile` / `storePassword` / `keyAlias` / `keyPassword`，已 gitignore），`./gradlew :app:assembleRelease` 自动使用它。
 
+### 自动更新
+
+手机端直接读取本仓库的 `releases/latest`：取正式 Release 里第一个 `.apk` 资产，按 tag 换算 `versionCode` 与已装版本比较。启动时自动检查（6 小时内不重复请求），「连接 → 关于 → 检查更新」可手动触发。
+
+- 发现新版本：连接页顶部出现提示，点开弹层显示 Release 说明（取 annotated tag 注释）；「下载更新」带进度，完成后自动调起系统安装器。
+- 首次更新需要允许本项目「安装未知应用」；系统安装器仍会要求用户确认，无法静默安装。
+- 下载后校验同名 `.sha256` 资产（存在时）与 APK 包名，校验不过直接删除重试。
+- **签名必须一致**：只能覆盖安装同签名的包。CI 正式签名包只能被同密钥的包覆盖；本地 debug 包与 CI 包签名不同，覆盖安装会失败，需要卸载重装。
+- 自动检查失败时静默忽略，不影响正常使用；手动检查失败会提示原因。
+
 ## 后台策略
 
 - 前台服务类型为 `remoteMessaging`：语义是接收配对设备的消息，允许开机后恢复，也不受 Android 15 `dataSync` 6 小时上限影响。
@@ -132,6 +143,7 @@ app/src/main/java/com/projectmanager/mobile/
   notify/      通知渠道、条目通知与汇总、通知权限判定
   service/     前台服务、开机恢复
   ui/          Compose 页面、主题、ViewModel
+  update/      版本检查（GitHub Release）、APK 下载校验与安装
 .github/workflows/release.yml   tag 触发的 APK 发布流水线
 tools/mobile-peer.mjs           本地测试桩
 doc/mobile-app-design.md        页面设计与技术说明

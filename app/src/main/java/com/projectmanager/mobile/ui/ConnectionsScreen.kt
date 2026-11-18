@@ -83,9 +83,13 @@ fun ConnectionsScreen(
     onAdd: (ConnectInfo, String) -> Boolean,
     onToggleNotifications: (Boolean) -> Unit,
     onTestAlert: () -> Unit,
-    onBatteryPromptShown: () -> Unit
+    onBatteryPromptShown: () -> Unit,
+    update: UpdateUiState,
+    onCheckUpdate: () -> Unit,
+    onOpenUpdate: () -> Unit
 ) {
     val context = LocalContext.current
+    val updateInfo = update.info
 
     var pendingInfo by remember { mutableStateOf<ConnectInfo?>(null) }
     var nameDraft by remember { mutableStateOf("") }
@@ -270,6 +274,16 @@ fun ConnectionsScreen(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 28.dp)
         ) {
+            if (updateInfo != null) {
+                item {
+                    NoticeCard(
+                        title = "有新版本 v${updateInfo.versionName}",
+                        body = "下载后按系统提示安装，现有连接与设置都会保留。",
+                        action = if (update.phase == UpdatePhase.DOWNLOADED) "安装" else "更新",
+                        onAction = onOpenUpdate
+                    )
+                }
+            }
             if (state.connections.isEmpty()) {
                 item {
                     EmptyState(
@@ -425,6 +439,35 @@ fun ConnectionsScreen(
                     title = "版本",
                     subtitle = "协议 v1",
                     trailing = { Text("v${BuildConfig.VERSION_NAME}", fontSize = 12.5.sp) }
+                )
+            }
+            item {
+                SettingRow(
+                    title = "检查更新",
+                    subtitle = when {
+                        update.phase == UpdatePhase.CHECKING -> "正在检查新版本…"
+                        updateInfo != null -> "可更新到 v${updateInfo.versionName}"
+                        update.phase == UpdatePhase.UP_TO_DATE -> "已是最新版本"
+                        update.phase == UpdatePhase.FAILED -> "上次检查失败，点此重试"
+                        else -> "从 GitHub Release 获取新版本"
+                    },
+                    trailing = {
+                        Text(
+                            when {
+                                updateInfo != null -> "更新"
+                                update.phase == UpdatePhase.CHECKING -> "检查中"
+                                else -> "检查"
+                            },
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (updateInfo != null) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            }
+                        )
+                    },
+                    onClick = { if (updateInfo != null) onOpenUpdate() else onCheckUpdate() }
                 )
             }
             item {

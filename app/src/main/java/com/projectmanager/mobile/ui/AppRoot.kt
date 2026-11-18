@@ -52,6 +52,8 @@ fun AppRoot(
     val state by vm.state.collectAsStateWithLifecycle()
     val remoteVm: RemoteViewModel = viewModel(factory = RemoteViewModel.factory(app))
     val remoteState by remoteVm.state.collectAsStateWithLifecycle()
+    val updateVm: UpdateViewModel = viewModel(factory = UpdateViewModel.factory(app))
+    val updateState by updateVm.state.collectAsStateWithLifecycle()
     val navController = rememberNavController()
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -61,6 +63,12 @@ fun AppRoot(
                 is UiEvent.Message -> snackbarHostState.showSnackbar(event.text)
             }
         }
+    }
+
+    /** 每次冷启动检查一次（6 小时内不重复请求），发现新版本时弹更新框 */
+    LaunchedEffect(Unit) { updateVm.autoCheck() }
+    LaunchedEffect(Unit) {
+        updateVm.events.collect { snackbarHostState.showSnackbar(it) }
     }
 
     /** 远程面的操作回执（采纳成功、打回失败…）：由 ViewModel 抛一次，显示完清掉 */
@@ -141,7 +149,10 @@ fun AppRoot(
                     },
                     onToggleNotifications = vm::setNotificationsEnabled,
                     onTestAlert = vm::testAlert,
-                    onBatteryPromptShown = vm::markBatteryPromptShown
+                    onBatteryPromptShown = vm::markBatteryPromptShown,
+                    update = updateState,
+                    onCheckUpdate = { updateVm.check(manual = true) },
+                    onOpenUpdate = updateVm::reopenDialog
                 )
             }
             composable("connections/{connId}") { entry ->
@@ -254,6 +265,15 @@ fun AppRoot(
                 )
             }
         }
+    }
+
+    if (updateState.showDialog) {
+        UpdateDialog(
+            state = updateState,
+            onDownload = updateVm::download,
+            onInstall = updateVm::install,
+            onDismiss = updateVm::dismissDialog
+        )
     }
 }
 

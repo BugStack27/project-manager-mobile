@@ -34,7 +34,8 @@ class PushGoHttpException(val code: Int, val detail: String?) : IOException(
 
 /**
  * PushGo Gateway 的最小客户端：设备注册、FCM 路由（为 Pull 准备）、频道订阅、发送、Pull、ACK。
- * 这是 Pull 原型：消息通过 FCM 路由入队，但不依赖真实 FCM 送达，靠 /v2/messages/pull 拉取。
+ * 这是 Pull 原型：消息通过 FCM 路由入队，但不依赖真实 FCM 送达，靠 /messages/pull 拉取。
+ * 2026-11-18 起网关改为 /messages/pull（无分页）与 /messages/ack（单条 delivery_id）。
  */
 class PushGoClient {
 
@@ -105,44 +106,36 @@ class PushGoClient {
     }
 
     fun pull(gateway: String, deviceKey: String): List<PushGoPullItem> {
-        val all = ArrayList<PushGoPullItem>()
-        var pageToken: String? = null
-        var pages = 0
-        do {
-            val body = buildJsonObject {
-                put("device_key", deviceKey)
-                if (!pageToken.isNullOrBlank()) put("page_token", pageToken)
-            }
-            val data = post(gateway, "/v2/messages/pull", body)
-            val items = data["items"] as? JsonArray ?: JsonArray(emptyList())
-            all += items.mapNotNull { element ->
-                val item = element as? JsonObject ?: return@mapNotNull null
-                val deliveryId = item.str("delivery_id") ?: return@mapNotNull null
-                val payloadObject = item["payload"] as? JsonObject ?: return@mapNotNull null
-                PushGoPullItem(
-                    deliveryId = deliveryId,
-                    payload = payloadObject.mapValues { (_, value) ->
-                        (value as? JsonPrimitive)?.contentOrNull.orEmpty()
-                    }
-                )
-            }
-            val hasMore = (data["has_more"] as? JsonPrimitive)?.contentOrNull == "true"
-            pageToken = if (hasMore) (data["next_page_token"] as? JsonPrimitive)?.contentOrNull else null
-            pages += 1
-        } while (!pageToken.isNullOrBlank() && pages < 10)
-        return all
+        val data = post(
+            gateway,
+            "/messages/pull",
+            buildJsonObject { put("device_key", deviceKey) }
+        )
+        val items = data["items"] as? JsonArray ?: JsonArray(emptyList())
+        return items.mapNotNull { element ->
+            val item = element as? JsonObject ?: return@mapNotNull null
+            val deliveryId = item.str("delivery_id") ?: return@mapNotNull null
+            val payloadObject = item["payload"] as? JsonObject ?: return@mapNotNull null
+            PushGoPullItem(
+                deliveryId = deliveryId,
+                payload = payloadObject.mapValues { (_, value) ->
+                    (value as? JsonPrimitive)?.contentOrNull.orEmpty()
+                }
+            )
+        }
     }
 
     fun ack(gateway: String, deviceKey: String, deliveryIds: List<String>) {
-        if (deliveryIds.isEmpty()) return
-        post(
-            gateway,
-            "/v2/messages/ack",
-            buildJsonObject {
-                put("device_key", deviceKey)
-                put("delivery_ids", buildJsonArray { deliveryIds.forEach { add(JsonPrimitive(it)) } })
-            }
-        )
+        for (id in deliveryIds) {
+            post(
+                gateway,
+                "/messages/ack",
+                buildJsonObject {
+                    put("device_key", deviceKey)
+                    put("delivery_id", id)
+                }
+            )
+        }
     }
 
     private fun post(gateway: String, path: String, body: JsonObject): JsonObject {

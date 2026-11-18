@@ -216,7 +216,7 @@ description: 项目管理台手机端（Android + Compose，多桌面端连接�
 ## 11. PushGo Pull 原型（2026-11-14 追加）
 
 - **连接信息 v2**：`{"v":2,"type":"pm-mobile","provider":"pushgo","gateway","channel","password"}`；`password` 同时作为频道密码和 AES-GCM 密钥，`channel` 作为 AAD。
-- **手机端**：`PushGoClient` 注册设备、设置 `fcm` 路由（随机 provider token，进入 Pull 队列）、订阅频道；`PushGoSession` 每 15 秒 `/v2/messages/pull`（翻页）、解密、落待办、按 `delivery_id` ACK；每分钟发 keepalive。
+- **手机端**：`PushGoClient` 注册设备、设置 `fcm` 路由（随机 provider token，进入 Pull 队列）、订阅频道；`PushGoSession` 每 15 秒 `/messages/pull`（单次、无分页）、解密、落待办、按 `delivery_id` ACK；每分钟发 keepalive。
 - **桌面端**：`electron/services/mobile-link.js` 改为 PushGo Pull；发送审核/提问时把既有 AES 信封放进 `ciphertext`，`op_id` 使用稳定消息 id；Pull 到手机答案后落库，并通过 keepalive 的 `resolvedIds` 通知手机移除条目。
 - **桌面端设置**：`doc` 中「手机端通信」弹窗显示 PushGo 网关、频道、密码、二维码；二维码 v2 供手机扫码/粘贴。
 - **验证**：`npm run check`、`npm run build` 通过；真实公共网关完成「审核 → 手机 Pull/ACK → 通过 → 桌面端收到答案 → resolved → 手机端移除」；模拟器 API 35 实机联调通过。

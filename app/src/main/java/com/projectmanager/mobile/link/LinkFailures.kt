@@ -51,6 +51,12 @@ object LinkFailures {
         }
     }
 
+    /** 网关把设备记录清了：重新注册即可，不该让用户重扫码 */
+    fun isDeviceGone(e: Throwable): Boolean =
+        e is PushGoHttpException &&
+            (e.errorCode == "device_key_not_found" ||
+                e.detail.orEmpty().contains("device_key_not_found"))
+
     private fun detailOf(e: Throwable): String =
         e.message?.takeIf { it.isNotBlank() } ?: (e.javaClass.simpleName.ifBlank { "未知错误" })
 }

@@ -85,28 +85,78 @@ class LinkFailuresTest {
     }
 
     @Test
-    fun `connected channel is online even with a stale heartbeat`() {
-        // 心跳只用来更新通道链接，早就不参与在线判定：通道通着就该显示已连接
+    fun `connected channel with a stale heartbeat waits for desktop`() {
+        // 频道只代表网关可达：桌面端退出后频道仍在，必须靠心跳判断桌面端是否还活着
         val stale = System.currentTimeMillis() - Protocol.CLIENT_ONLINE_MS - 1000
         val runtime = ConnectionRuntime(connected = true, lastInboundAt = stale)
         assertNull(runtime.adviceKind)
-        assertEquals("在线", runtime.chipText)
-        assertEquals("已连接", runtime.statusText)
+        assertFalse(runtime.isOnline())
+        assertEquals("等待桌面端", runtime.chipText)
+        assertEquals("等待桌面端", runtime.statusText)
         assertTrue(runtime.connected)
     }
 
     @Test
-    fun `connected channel is online before any inbound message`() {
+    fun `connected channel before any heartbeat waits for desktop`() {
         val runtime = ConnectionRuntime(connected = true)
         assertNull(runtime.adviceKind)
-        assertEquals("在线", runtime.chipText)
-        assertEquals("已连接", runtime.statusText)
+        assertFalse(runtime.isOnline())
+        assertEquals("等待桌面端", runtime.chipText)
+        assertEquals("等待桌面端", runtime.statusText)
     }
 
     @Test
     fun `healthy connection has no advice`() {
         val runtime = ConnectionRuntime(connected = true, lastInboundAt = System.currentTimeMillis())
         assertNull(runtime.adviceKind)
+        assertTrue(runtime.isOnline())
         assertEquals("在线", runtime.chipText)
+    }
+
+    @Test
+    fun `device key not found is self healable`() {
+        val gone = PushGoHttpException(400, "device not found", "device_key_not_found")
+        assertTrue(LinkFailures.isDeviceGone(gone))
+        // 老网关不回 error_code 时，退回看错误文本
+        assertTrue(LinkFailures.isDeviceGone(PushGoHttpException(400, "device_key_not_found")))
+        assertFalse(
+            LinkFailures.isDeviceGone(PushGoHttpException(404, "channel not found", "channel_not_found"))
+        )
+    }
+
+    @Test
+    fun `remote surface down makes a connected channel unavailable`() {
+        val now = System.currentTimeMillis()
+        val runtime = ConnectionRuntime(
+            connected = true,
+            lastInboundAt = now,
+            remoteReachable = false
+        )
+        assertFalse(runtime.isOnline(now))
+        assertEquals("不可达", runtime.chipText)
+        assertEquals("桌面端不可达", runtime.statusText)
+    }
+
+    @Test
+    fun `reachable remote surface is online even without a fresh heartbeat`() {
+        val stale = System.currentTimeMillis() - Protocol.CLIENT_ONLINE_MS - 1000
+        val runtime = ConnectionRuntime(
+            connected = true,
+            lastInboundAt = stale,
+            remoteReachable = true
+        )
+        assertTrue(runtime.isOnline())
+        assertEquals("已连接", runtime.statusText)
+    }
+
+    @Test
+    fun `heartbeat exactly at the tolerance edge is still online`() {
+        val now = 1_000_000L
+        val runtime = ConnectionRuntime(
+            connected = true,
+            lastInboundAt = now - Protocol.CLIENT_ONLINE_MS
+        )
+        assertTrue(runtime.isOnline(now))
+        assertFalse(runtime.isOnline(now + 1))
     }
 }

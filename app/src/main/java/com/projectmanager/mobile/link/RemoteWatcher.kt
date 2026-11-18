@@ -7,10 +7,12 @@ import com.projectmanager.mobile.data.RemoteApi
 import com.projectmanager.mobile.data.RemoteConfig
 import com.projectmanager.mobile.data.toPendingItem
 import com.projectmanager.mobile.notify.Notifier
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -26,7 +28,9 @@ import kotlinx.coroutines.launch
  */
 class RemoteWatcher(
     private val repo: AppRepository,
-    private val notifier: Notifier
+    private val notifier: Notifier,
+    /** 每台桌面端的长轮询结果，供连接状态区分“电脑关了”和“网关频道还在” */
+    private val onRemoteHealth: (String, Boolean) -> Unit = { _, _ -> }
 ) {
     private var snapshotJob: Job? = null
     private var scope: CoroutineScope? = null
@@ -77,7 +81,18 @@ class RemoteWatcher(
 
         while (currentCoroutineContext().isActive) {
             try {
-                val res = RemoteApi(config).wait(key, 25)
+                val res = try {
+                    RemoteApi(config).wait(key, 25)
+                } catch (e: CancellationException) {
+                    // 换接入点 / 停服务时取消：不是桌面端不可达
+                    throw e
+                } catch (e: Exception) {
+                    if (currentCoroutineContext().isActive) onRemoteHealth(connId, false)
+                    throw e
+                }
+                // 请求可能在取消后才返回：先确认自己仍是当前轮询，避免旧结果覆盖新状态
+                currentCoroutineContext().ensureActive()
+                onRemoteHealth(connId, true)
                 key = res.key
                 backoff = 5_000L
 

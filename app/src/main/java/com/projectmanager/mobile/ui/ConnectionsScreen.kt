@@ -240,8 +240,15 @@ fun ConnectionsScreen(
             }
         }
 
-        val online = state.runtimes.values.count { it.connected }
-        val reconnecting = state.connections.size - online
+        val online = state.connections.count { state.runtimes[it.id]?.isOnline() == true }
+        val unreachable = state.connections.count {
+            state.runtimes[it.id]?.remoteReachable == false
+        }
+        val waiting = state.connections.count {
+            val runtime = state.runtimes[it.id]
+            runtime?.connected == true && runtime.remoteReachable != false && runtime.isOnline().not()
+        }
+        val reconnecting = state.connections.size - online - waiting - unreachable
         val rescanNeeded = state.connections.count { state.runtimes[it.id]?.adviceKind?.needsRescan == true }
         Row(
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
@@ -250,6 +257,22 @@ fun ConnectionsScreen(
             StatusDot(if (online > 0) successColor() else warningColor())
             Spacer(Modifier.width(6.dp))
             Text("$online 台在线", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (unreachable > 0) {
+                Spacer(Modifier.width(10.dp))
+                Text("·", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
+                Spacer(Modifier.width(10.dp))
+                StatusDot(MaterialTheme.colorScheme.error)
+                Spacer(Modifier.width(6.dp))
+                Text("$unreachable 台不可达", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+            }
+            if (waiting > 0) {
+                Spacer(Modifier.width(10.dp))
+                Text("·", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
+                Spacer(Modifier.width(10.dp))
+                StatusDot(warningColor())
+                Spacer(Modifier.width(6.dp))
+                Text("$waiting 台等待桌面端", fontSize = 12.sp, color = warningColor())
+            }
             if (reconnecting > 0) {
                 Spacer(Modifier.width(10.dp))
                 Text("·", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
@@ -579,7 +602,7 @@ private fun ConnectionCard(
     pending: Int,
     onClick: () -> Unit
 ) {
-    val online = runtime?.connected == true
+    val online = runtime?.isOnline() == true
     val advice = runtime?.adviceKind
     val danger = advice?.needsRescan == true
     val statusColor = when {
@@ -641,8 +664,15 @@ private fun ConnectionCard(
                         append(" · 待办 ")
                         append(pending)
                         append(" · ")
-                        // 连不上时把具体原因写在副行；连上了就只说通道状态，心跳不参与判定
-                        append(advice?.title ?: if (online) "通道已连接" else "连接中")
+                        // 连不上时把具体原因写在副行；连上了就只说通道状态
+                        append(
+                            advice?.title ?: when {
+                                online -> "通道已连接"
+                                runtime?.remoteReachable == false -> "桌面端暂不可达"
+                                runtime?.connected == true -> "等待桌面端心跳"
+                                else -> "连接中"
+                            }
+                        )
                     },
                     fontSize = 11.5.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),

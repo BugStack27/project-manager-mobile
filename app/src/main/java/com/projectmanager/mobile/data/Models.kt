@@ -125,30 +125,48 @@ data class StoreSnapshot(
 
 data class ConnectionRuntime(
     val connected: Boolean = false,
-    /** 最近一次收到 PushGo 心跳的时间：只说明通道链接更新过，不再参与在线判定 */
+    /** 最近一次收到 PushGo 心跳的时间：桌面端在线与否靠它和当前时间比 */
     val lastInboundAt: Long? = null,
     /** 最近一次连接失败（连上网关后清空）；没失败过就是 null */
     val failure: LinkFailure? = null,
+    /** /remote 长轮询是否可达：null 表示还没轮到过一次 */
+    val remoteReachable: Boolean? = null,
+    /** 最近一次长轮询成功 / 失败时间，诊断用 */
+    val remoteOkAt: Long? = null,
+    val remoteFailAt: Long? = null,
     val pending: Int = 0,
     val sessionStartedAt: Long? = null,
     val lastPublishAt: Long? = null,
-    val reconnectAt: Long? = null
+    val reconnectAt: Long? = null,
+    /** 每次运行态上报的时间：让纯时间变化（心跳过期）也能触发界面重组 */
+    val checkedAt: Long = 0L
 ) {
     /** 传输层原文，诊断用；界面展示走 [adviceKind] 的文案 */
     val lastError: String? get() = failure?.detail
 
     /**
      * 当前该展示哪种失败说明；连上了就没有要提示的。
-     *
-     * 在线判定只看 [connected]（通道接上即在线）：业务已全部走远程 HTTP，PushGo 只剩
-     * 「后台更新通道链接」，再拿它的心跳包判断在线会让通道明明通着却一直显示「等待心跳」。
      */
     val adviceKind: LinkFailureKind?
         get() = failure?.kind
 
+    /**
+     * 在线 = 网关频道接上，且远程面可达或至少心跳新鲜。
+     * 远程面成功过就不必再等心跳；失败过则即使频道还在也不算在线。
+     */
+    fun isOnline(now: Long = System.currentTimeMillis()): Boolean =
+        connected &&
+            remoteReachable != false &&
+            (remoteReachable == true || heartbeatFresh(now))
+
+    private fun heartbeatFresh(now: Long): Boolean =
+        lastInboundAt != null && now - lastInboundAt <= Protocol.CLIENT_ONLINE_MS
+
     val statusText: String
         get() = when {
-            connected -> "已连接"
+            isOnline() -> "已连接"
+            remoteReachable == false -> "桌面端不可达"
+            connected -> "等待桌面端"
             failure != null -> failure.kind.title
             else -> "连接中…"
         }
@@ -156,7 +174,9 @@ data class ConnectionRuntime(
     /** 列表 / 状态行用的短标签 */
     val chipText: String
         get() = when {
-            connected -> "在线"
+            isOnline() -> "在线"
+            remoteReachable == false -> "不可达"
+            connected -> "等待桌面端"
             failure != null -> failure.kind.chip
             else -> "连接中"
         }

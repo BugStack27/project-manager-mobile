@@ -6,7 +6,6 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -28,7 +27,12 @@ data class PushGoPullItem(
  * 单独成型是为了让界面能按 `code` / `detail` 判类别（密码错、频道失效、网关 5xx），
  * 而不是只拿到一句拼好的「PushGo HTTP 401：invalid password」去正则。
  */
-class PushGoHttpException(val code: Int, val detail: String?) : IOException(
+class PushGoHttpException(
+    val code: Int,
+    val detail: String?,
+    /** 网关的业务错误码（如 device_key_not_found）：HTTP 码看不出设备记录是否还在 */
+    val errorCode: String? = null
+) : IOException(
     "PushGo HTTP $code" + (detail?.takeIf { it.isNotBlank() }?.let { "：$it" } ?: "")
 )
 
@@ -80,31 +84,6 @@ class PushGoClient {
         )
     }
 
-    fun send(
-        gateway: String,
-        channelId: String,
-        password: String,
-        title: String,
-        body: String,
-        ciphertext: String,
-        opId: String,
-        metadata: JsonObject
-    ) {
-        post(
-            gateway,
-            "/message",
-            buildJsonObject {
-                put("channel_id", channelId)
-                put("password", password)
-                put("title", title)
-                put("body", body)
-                put("ciphertext", ciphertext)
-                put("op_id", opId)
-                put("metadata", metadata)
-            }
-        )
-    }
-
     fun pull(gateway: String, deviceKey: String): List<PushGoPullItem> {
         val data = post(
             gateway,
@@ -150,7 +129,9 @@ class PushGoClient {
             if (!response.isSuccessful || !success) {
                 val error = (parsed?.get("error") as? JsonPrimitive)?.contentOrNull
                     ?: ((parsed?.get("problem") as? JsonObject)?.get("detail") as? JsonPrimitive)?.contentOrNull
-                throw PushGoHttpException(response.code, error)
+                val errorCode = (parsed?.get("error_code") as? JsonPrimitive)?.contentOrNull
+                    ?: ((parsed?.get("problem") as? JsonObject)?.get("error_code") as? JsonPrimitive)?.contentOrNull
+                throw PushGoHttpException(response.code, error, errorCode)
             }
             return (parsed?.get("data") as? JsonObject) ?: buildJsonObject {}
         }

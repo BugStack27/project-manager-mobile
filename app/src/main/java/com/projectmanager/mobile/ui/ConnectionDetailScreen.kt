@@ -101,7 +101,7 @@ fun ConnectionDetailScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = 24.dp)
         ) {
-            val online = runtime?.connected == true
+            val online = runtime?.isOnline() == true
             val advice = runtime?.adviceKind
             val danger = advice?.needsRescan == true
             val statusColor = when {
@@ -136,7 +136,8 @@ fun ConnectionDetailScreen(
                 Text(
                     when {
                         runtime?.lastInboundAt != null -> "通道链接更新于 ${relativeTime(runtime.lastInboundAt)}"
-                        online -> "通道已连接"
+                        runtime?.remoteReachable == false -> "桌面端暂不可达"
+                        runtime?.connected == true -> "等待桌面端心跳"
                         else -> "还没有连上通道"
                     },
                     fontSize = 12.sp,

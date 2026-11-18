@@ -45,7 +45,9 @@ class MobileLinkService : Service() {
         repo = container.repo
         linkManager = container.linkManager
         notifier = container.notifier
-        remoteWatcher = RemoteWatcher(repo, notifier)
+        remoteWatcher = RemoteWatcher(repo, notifier) { id, reachable ->
+            linkManager.markRemoteReachable(id, reachable)
+        }
 
         // 先拉起接收链路：即使这次进不了前台（后台被系统重启时可能被拒），
         // 服务仍能立刻补拉一轮并补发通知，而不是整个后台接收直接停摆。
@@ -111,10 +113,16 @@ class MobileLinkService : Service() {
         val connections = repo.connections.size
         if (connections == 0) return "暂无连接"
         val runtimes = linkManager.runtimes.value
-        val online = runtimes.values.count { it.connected }
+        val online = runtimes.values.count { it.isOnline() }
+        val unreachable = runtimes.values.count { it.remoteReachable == false }
+        val waiting = runtimes.values.count {
+            it.connected && it.remoteReachable != false && it.isOnline().not()
+        }
         val items = repo.items.count { it.isActionable() }
         return when {
             online > 0 -> "$online 台在线 · $items 条待办"
+            unreachable > 0 -> "桌面端不可达 · $items 条待办"
+            waiting > 0 -> "等待桌面端 · $items 条待办"
             else -> "连接中 · $items 条待办"
         }
     }

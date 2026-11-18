@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.projectmanager.mobile.PmApp
 import com.projectmanager.mobile.data.AppRepository
 import com.projectmanager.mobile.data.ConnectionRecord
+import com.projectmanager.mobile.data.ConnectionRuntime
 import com.projectmanager.mobile.data.RemoteApi
 import com.projectmanager.mobile.data.RemoteChangeFile
 import com.projectmanager.mobile.data.RemoteChanges
@@ -18,6 +19,7 @@ import com.projectmanager.mobile.data.RemoteRequirement
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -40,6 +42,8 @@ data class RemoteDesktopState(
     val projects: List<RemoteProject> = emptyList(),
     val loading: Boolean = false,
     val online: Boolean = false,
+    /** 页面标题用的统一结论：已连接 / 等待桌面端 / 桌面端不可达 / 频道失败原因 */
+    val status: String = "连接中",
     val error: String? = null
 )
 
@@ -59,6 +63,7 @@ data class RemoteState(
 class RemoteViewModel(private val app: PmApp) : ViewModel() {
 
     private val repo: AppRepository = app.container.repo
+    private val linkManager = app.container.linkManager
 
     private val _state = MutableStateFlow(RemoteState())
     val state: StateFlow<RemoteState> = _state.asStateFlow()
@@ -73,7 +78,9 @@ class RemoteViewModel(private val app: PmApp) : ViewModel() {
 
     init {
         viewModelScope.launch {
-            repo.snapshot.collect { snap -> syncDesktops(snap.connections) }
+            combine(repo.snapshot, linkManager.runtimes) { snap, runtimes ->
+                snap.connections to runtimes
+            }.collect { (connections, runtimes) -> syncDesktops(connections, runtimes) }
         }
     }
 
@@ -85,19 +92,38 @@ class RemoteViewModel(private val app: PmApp) : ViewModel() {
      *
      * 还没下发接入点的电脑也保留一行（提示等待配对），否则用户完全看不出这台机器为什么没有项目。
      */
-    private fun syncDesktops(connections: List<ConnectionRecord>) {
+    private fun syncDesktops(
+        connections: List<ConnectionRecord>,
+        runtimes: Map<String, ConnectionRuntime>
+    ) {
         val previous = _state.value.desktops.associateBy { it.connectionId }
         val next = connections.map { conn ->
             val old = previous[conn.id]
             val ready = conn.remote.ready
+            val runtime = runtimes[conn.id]
+            val online = ready && runtime?.isOnline() == true
+            val status = when {
+                !ready -> "等待地址"
+                online -> "已连接"
+                runtime?.remoteReachable == false -> "桌面端不可达"
+                runtime?.connected == true -> runtime.statusText
+                runtime?.failure != null -> runtime.statusText
+                else -> "连接中"
+            }
             RemoteDesktopState(
                 connectionId = conn.id,
                 connectionName = conn.name,
                 ready = ready,
                 projects = if (ready) old?.projects.orEmpty() else emptyList(),
                 loading = ready && old?.loading == true,
-                online = ready && old?.online == true,
-                error = if (ready) old?.error else null
+                online = online,
+                status = status,
+                error = when {
+                    !ready -> null
+                    runtime?.remoteReachable == false -> "桌面端暂不可达"
+                    online -> null
+                    else -> old?.error
+                }
             )
         }
         _state.update { it.copy(desktops = next) }
@@ -136,12 +162,12 @@ class RemoteViewModel(private val app: PmApp) : ViewModel() {
                 val projects = RemoteApi(connection.remote).projects()
                 loadedConfigs[connId] = connection.remote
                 updateDesktop(connId) {
-                    it.copy(projects = projects, loading = false, online = true, error = null)
+                    it.copy(projects = projects, loading = false, error = null)
                 }
             } catch (e: Exception) {
                 loadedConfigs.remove(connId)
                 updateDesktop(connId) {
-                    it.copy(loading = false, online = false, error = e.message ?: "读取项目失败")
+                    it.copy(loading = false, error = e.message ?: "读取项目失败")
                 }
             } finally {
                 loadingProjects.remove(connId)

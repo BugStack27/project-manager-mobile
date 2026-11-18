@@ -31,8 +31,8 @@ import kotlinx.serialization.json.put
  * 现在业务全部走 `/remote`（由前台服务里的 RemoteWatcher 常驻长轮询），这里只做一件事：
  * 把桌面端下发的隧道地址与令牌落盘，供远程面使用。
  *
- * 在线判定只看这条通道能否接上（`ensureReady` 成功即算连上），不等心跳包：
- * 心跳只用于更新通道链接，收不到不代表连不上。
+ * 心跳同时是桌面端存活的推送信号：桌面端退出后频道仍在，靠 150 秒内是否收到心跳判断在线；
+ * 远程面可达时则直接算在线，不必再等心跳。
  */
 class PushGoSession(
     private val connection: ConnectionRecord,
@@ -99,11 +99,19 @@ class PushGoSession(
                 publishRuntime()
                 while (currentCoroutineContext().isActive) {
                     pollOnce()
+                    // 心跳过期是随时间发生的：每轮都上报一次，界面才能自己从在线翻成等待桌面端
+                    publishRuntime()
                     delay(POLL_MS)
                 }
             } catch (e: Exception) {
                 if (!currentCoroutineContext().isActive) break
                 connected = false
+                if (LinkFailures.isDeviceGone(e)) {
+                    // 设备记录被网关清掉：下一轮 ensureReady 会重新注册、建路由、重新订阅
+                    deviceKey = null
+                    routeReady = false
+                    subscribed = false
+                }
                 failure = LinkFailures.classify(e)
                 reconnectAt = System.currentTimeMillis() + backoff
                 publishRuntime()
@@ -175,7 +183,7 @@ class PushGoSession(
                 rememberSeen(messageId, now)
 
                 if (message.str("from") == "server" && message.str("type") == "keepalive") {
-                    // 心跳只用来刷新通道链接与「最近更新」时间，不决定连接状态
+                    // 心跳是桌面端存活的唯一推送信号：刷新最近更新并参与在线判定
                     lastInboundAt = now
                     applyEndpoint(message["payload"] as? JsonObject)
                     publishRuntime()
@@ -216,7 +224,8 @@ class PushGoSession(
                 failure = failure,
                 sessionStartedAt = startedAt,
                 lastPublishAt = lastPublishAt,
-                reconnectAt = reconnectAt
+                reconnectAt = reconnectAt,
+                checkedAt = System.currentTimeMillis()
             )
         )
     }

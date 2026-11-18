@@ -100,6 +100,20 @@ class LinkManager(
         _foreground.value = value
     }
 
+    /** 远程面长轮询的结果：只改这一条连接，并刷新对应的成功/失败时间 */
+    fun markRemoteReachable(id: String, reachable: Boolean) {
+        val now = System.currentTimeMillis()
+        _runtimes.update { current ->
+            val runtime = current[id] ?: return@update current
+            val updated = runtime.copy(
+                remoteReachable = reachable,
+                remoteOkAt = if (reachable) now else runtime.remoteOkAt,
+                remoteFailAt = if (reachable) runtime.remoteFailAt else now
+            )
+            current + (id to updated)
+        }
+    }
+
     /** 手动重新同步：断开当前订阅，按 since=10m 重新拉取所有连接。 */
     fun refreshAll() {
         sessions.values.forEach { it.reconnectNow() }
@@ -109,7 +123,7 @@ class LinkManager(
         val connections = repo.connections.size
         if (connections == 0) return "暂无连接"
         val runtimes = _runtimes.value
-        val online = runtimes.values.count { it.connected }
+        val online = runtimes.values.count { it.isOnline() }
         val items = repo.items.size
         return "$online 台在线 · $items 条待办"
     }
@@ -136,7 +150,15 @@ class LinkManager(
 
     private fun createSession(connection: ConnectionRecord): TransportSession {
         val onRuntime: (ConnectionRuntime) -> Unit = { runtime ->
-            _runtimes.update { it + (connection.id to runtime) }
+            _runtimes.update { current ->
+                // PushGo 每轮都会重报运行态，远程面结论要保留，否则会被心跳覆盖回未知
+                val existing = current[connection.id]
+                current + (connection.id to runtime.copy(
+                    remoteReachable = existing?.remoteReachable,
+                    remoteOkAt = existing?.remoteOkAt,
+                    remoteFailAt = existing?.remoteFailAt
+                ))
+            }
         }
         return PushGoSession(connection, repo, onRuntime)
     }

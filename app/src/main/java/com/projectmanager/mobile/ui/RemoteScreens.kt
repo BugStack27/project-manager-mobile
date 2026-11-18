@@ -83,7 +83,7 @@ fun RemoteProjectsScreen(
                 !state.ready -> "等待桌面端地址"
                 state.desktops.size == 1 -> {
                     val desktop = state.desktops.first()
-                    if (desktop.online) "${desktop.connectionName} · 已连接" else "${desktop.connectionName} · 连接中断"
+                    "${desktop.connectionName} · ${desktop.status}"
                 }
                 else -> "${state.desktops.count { it.online }}/${state.desktops.size} 台在线 · 共 ${state.projectCount} 个项目"
             },

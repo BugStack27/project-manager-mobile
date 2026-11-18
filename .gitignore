@@ -9,3 +9,5 @@ captures/
 keystore.properties
 *.jks
 *.keystore
+# 统一签名密钥随仓库公开，debug 与 release 共用
+!keystore/project-manager.jks

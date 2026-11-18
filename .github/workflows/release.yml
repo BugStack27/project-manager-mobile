@@ -6,8 +6,8 @@ name: Release
 # 版本规则：tag 去掉 v 必须等于 app/build.gradle.kts 的 versionName；
 # versionCode 由 tag 推导（major*10000 + minor*100 + patch），保证新包能覆盖旧包装上。
 #
-# 签名：配置了 ANDROID_KEYSTORE_BASE64 等 secrets 时用正式密钥签名；
-# 没配置时退回 debug 签名——包仍可直接安装与升级，只是不适合长期分发。
+# 签名：使用仓库内公开的 keystore/project-manager.jks，与本地 debug 包同一签名，
+# 所以本地包和 Release 包可以互相覆盖升级，无需再配置签名 secrets。
 on:
   push:
     tags:
@@ -52,29 +52,6 @@ jobs:
           IFS=. read -r MAJOR MINOR PATCH <<< "$VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "code=$((MAJOR * 10000 + MINOR * 100 + PATCH))" >> "$GITHUB_OUTPUT"
-
-      - name: 准备签名密钥
-        id: signing
-        shell: bash
-        env:
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "未配置 ANDROID_KEYSTORE_BASE64，release 包将使用 debug 签名"
-            echo "signed=debug" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
-          cat > keystore.properties <<EOF
-          storeFile=$RUNNER_TEMP/release.keystore
-          storePassword=$STORE_PASSWORD
-          keyAlias=$KEY_ALIAS
-          keyPassword=$KEY_PASSWORD
-          EOF
-          echo "signed=release" >> "$GITHUB_OUTPUT"
 
       - name: 单元测试
         run: ./gradlew :app:testDebugUnitTest --no-daemon -Dorg.gradle.java.home="$JAVA_HOME" -PversionCode=${{ steps.ver.outputs.code }}

@@ -88,10 +88,9 @@ git push origin v0.0.2
 ```
 
 - tag 去掉 `v` 必须与 `versionName` 完全一致，否则流水线直接失败；`versionCode` 由 tag 推导为 `major*10000 + minor*100 + patch`，保证新包能覆盖旧包装上。
-- 签名：配置仓库 secrets 后使用正式密钥，未配置时退回 debug 签名（可直接安装，但不适合长期分发）。需要配置的 secrets：
-  - `ANDROID_KEYSTORE_BASE64`：keystore 文件 `base64 -w0 release.keystore`
-  - `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD`
-- 本机签名打包：在根目录放 `keystore.properties`（`storeFile` / `storePassword` / `keyAlias` / `keyPassword`，已 gitignore），`./gradlew :app:assembleRelease` 自动使用它。
+- 签名：全仓库统一使用公开的 `keystore/project-manager.jks`，本地 debug、本机 release 与 CI Release 都是这一套密钥，包之间可以互相覆盖升级。口令写在 `app/build.gradle.kts`，不再需要配置签名 secrets。
+- 密钥随仓库公开（开源项目），它只用来保证包来源一致，不具备防篡改作用；换密钥会导致已安装的旧包无法覆盖升级，只能卸载重装。
+
 
 ### 自动更新
 
@@ -100,7 +99,7 @@ git push origin v0.0.2
 - 发现新版本：连接页顶部出现提示，点开弹层显示 Release 说明（取 annotated tag 注释）；「下载更新」带进度，完成后自动调起系统安装器。
 - 首次更新需要允许本项目「安装未知应用」；系统安装器仍会要求用户确认，无法静默安装。
 - 下载后校验同名 `.sha256` 资产（存在时）与 APK 包名，校验不过直接删除重试。
-- **签名必须一致**：只能覆盖安装同签名的包。CI 正式签名包只能被同密钥的包覆盖；本地 debug 包与 CI 包签名不同，覆盖安装会失败，需要卸载重装。
+- **签名必须一致**：只能覆盖安装同签名的包。仓库统一使用 `keystore/project-manager.jks`，本地 debug 包、CI Release 包与自动更新包签名相同，可直接覆盖安装。
 - 自动检查失败时静默忽略，不影响正常使用；手动检查失败会提示原因。
 
 ## 后台策略

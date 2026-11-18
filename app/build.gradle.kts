@@ -1,5 +1,3 @@
-import java.util.Properties
-
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -7,12 +5,11 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
-// 正式签名凭据：本机放根目录 keystore.properties（已 gitignore），CI 由 workflow 生成；
-// 没有它的构建（日常 debug、没配 secrets 的 release）走 debug 签名兜底。
-val keystoreProps = Properties().apply {
-    val file = rootProject.file("keystore.properties")
-    if (file.exists()) file.inputStream().use { load(it) }
-}
+// 统一签名：keystore/project-manager.jks 随仓库公开，debug 与 release、本地与 CI 全部使用它。
+// 这样本地 debug 包和 GitHub Release 包签名一致，可以互相覆盖升级。
+// 仓库开源、密钥公开，所以它只保证「包来自同一来源」，不具备防篡改作用；
+// 一旦替换这个密钥，已安装的旧包就无法覆盖升级，只能卸载重装。
+val sharedKeystoreFile = rootProject.file("keystore/project-manager.jks")
 
 android {
     namespace = "com.projectmanager.mobile"
@@ -29,25 +26,21 @@ android {
     }
 
     signingConfigs {
-        if (keystoreProps.isNotEmpty()) {
-            create("release") {
-                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
-                storePassword = keystoreProps.getProperty("storePassword")
-                keyAlias = keystoreProps.getProperty("keyAlias")
-                keyPassword = keystoreProps.getProperty("keyPassword")
-            }
+        create("shared") {
+            storeFile = sharedKeystoreFile
+            storePassword = "project-manager"
+            keyAlias = "project-manager"
+            keyPassword = "project-manager"
         }
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("shared")
+        }
         release {
             isMinifyEnabled = false
-            // 没有正式密钥时用 debug 签名：包仍可直接安装与覆盖升级，只是不适合长期分发
-            signingConfig = if (keystoreProps.isNotEmpty()) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
-            }
+            signingConfig = signingConfigs.getByName("shared")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }

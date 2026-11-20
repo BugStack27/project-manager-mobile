@@ -216,6 +216,7 @@ fun AppRoot(
             composable("remote") {
                 RemoteProjectsScreen(
                     state = remoteState,
+                    pendingItems = state.items,
                     onRefresh = remoteVm::refresh,
                     onOpenProject = { entry ->
                         navController.navigate(

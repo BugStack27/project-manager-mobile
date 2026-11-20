@@ -298,6 +298,13 @@ description: 项目管理台手机端（Android + Compose，多桌面端连接�
 - 迁移：老存档的全局接入点在启动时迁移给唯一的那台连接；待办里挂 `remote` 这个假连接的旧条目清理掉，由下一轮长轮询按连接重新落库。
 - 验证：`:app:testDebugUnitTest`、`:app:assembleDebug` 通过；无连接设备，多台电脑联调与页面点击未在本轮复测。
 
+### 10. 项目列表标出待审核 / 待回答（2026-11-20）✅
+
+- 现象：底部「项目」tab 有待办角标，但项目列表里每张卡片只有名称与路径，看不出到底是哪个项目在等审核。
+- 根因：项目页只渲染 `/remote/projects` 的项目信息，没有把已经落库的待办（`PendingItem`）按 `projectId` 归到项目上；角标统计在底部 tab，与列表数据没有关联。
+- 实现：`RemoteProjectsScreen` 接收待办列表，`projectPending()` 按「连接 + projectId」聚合未处理条目（老版本桌面端只有 `projectName` 时用名称兜底；已提交或已过期不计，与角标 / 提醒同口径），`ProjectCard` 在项目名右侧显示「待审核 N」「待回答 N」标签。
+- 验证：`:app:testDebugUnitTest`（新增 `ProjectPendingTest` 4 组：同项目计数、跨连接 / 跨项目隔离、无 projectId 时按名称兜底、已提交与过期不计）、`:app:assembleDebug` 通过；无连接设备，页面视觉效果未在本轮真机复测。
+
 ### 已知限制
 
 - 被用户「强行停止」后系统不会自动恢复服务（Android 限制）。

@@ -49,6 +49,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.projectmanager.mobile.data.ItemKind
+import com.projectmanager.mobile.data.PendingItem
 import com.projectmanager.mobile.data.RemoteChangeFile
 import com.projectmanager.mobile.data.RemoteChanges
 import com.projectmanager.mobile.data.RemoteCommand
@@ -68,6 +70,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun RemoteProjectsScreen(
     state: RemoteState,
+    pendingItems: List<PendingItem>,
     onRefresh: () -> Unit,
     onOpenProject: (RemoteProjectEntry) -> Unit
 ) {
@@ -153,7 +156,10 @@ fun RemoteProjectsScreen(
                         }
                     }
                     items(desktop.projects, key = { "${desktop.connectionId}|${it.id}" }) { project ->
-                        ProjectCard(project) {
+                        ProjectCard(
+                            project = project,
+                            pending = projectPending(pendingItems, desktop.connectionId, project)
+                        ) {
                             onOpenProject(
                                 RemoteProjectEntry(desktop.connectionId, desktop.connectionName, project)
                             )
@@ -198,22 +204,67 @@ private fun DesktopHeader(desktop: RemoteDesktopState) {
     }
 }
 
+/** 单个项目上还没处理的待办：列表里直接标出哪个项目在等审核 / 等回答 */
+internal data class ProjectPending(val reviews: Int = 0, val questions: Int = 0)
+
+/**
+ * 把待办按项目归拢：新桌面端下发 projectId；老版本没有这个字段，用项目名兜底。
+ * 已提交或已过期的条目不算 —— 与底部角标、提醒同一口径。
+ */
+internal fun projectPending(
+    items: List<PendingItem>,
+    connId: String,
+    project: RemoteProject
+): ProjectPending {
+    var reviews = 0
+    var questions = 0
+    for (item in items) {
+        if (item.connId != connId || !item.isActionable()) continue
+        val matches = if (!item.projectId.isNullOrBlank()) {
+            item.projectId == project.id
+        } else {
+            item.projectName.isNotBlank() && item.projectName == project.name
+        }
+        if (!matches) continue
+        when (item.kind) {
+            ItemKind.REVIEW -> reviews++
+            ItemKind.QUESTION -> questions++
+        }
+    }
+    return ProjectPending(reviews, questions)
+}
+
 @Composable
-private fun ProjectCard(project: RemoteProject, onClick: () -> Unit) {
+private fun ProjectCard(project: RemoteProject, pending: ProjectPending, onClick: () -> Unit) {
     AppCard(modifier = Modifier.clickable(onClick = onClick)) {
         Row(
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 13.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
-                Text(
-                    project.name.ifBlank { "未命名项目" },
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        project.name.ifBlank { "未命名项目" },
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (pending.reviews > 0) {
+                        Spacer(Modifier.width(6.dp))
+                        Tag("待审核 ${pending.reviews}", warningColor(), warningTint())
+                    }
+                    if (pending.questions > 0) {
+                        Spacer(Modifier.width(6.dp))
+                        Tag(
+                            "待回答 ${pending.questions}",
+                            MaterialTheme.colorScheme.primary,
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                        )
+                    }
+                }
                 if (project.path.isNotBlank()) {
                     Spacer(Modifier.height(3.dp))
                     Text(

@@ -46,6 +46,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,13 +58,17 @@ import androidx.compose.ui.unit.sp
 import com.projectmanager.mobile.core.Protocol
 import com.projectmanager.mobile.data.ItemKind
 import com.projectmanager.mobile.data.PendingItem
+import com.projectmanager.mobile.data.RemoteChanges
+import com.projectmanager.mobile.data.RemoteDiff
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ItemScreen(
     item: PendingItem?,
     connectionName: String,
+    vm: RemoteViewModel,
     onBack: () -> Unit,
     onSubmit: (decision: String, text: String, onResult: (Boolean) -> Unit) -> Unit
 ) {
@@ -80,7 +85,7 @@ fun ItemScreen(
     }
 
     when (item.kind) {
-        ItemKind.REVIEW -> ReviewDetail(item, connectionName, onBack, onSubmit)
+        ItemKind.REVIEW -> ReviewDetail(item, connectionName, vm, onBack, onSubmit)
         ItemKind.QUESTION -> QuestionDetail(item, connectionName, onBack, onSubmit)
     }
 }
@@ -89,12 +94,32 @@ fun ItemScreen(
 private fun ReviewDetail(
     item: PendingItem,
     connectionName: String,
+    vm: RemoteViewModel,
     onBack: () -> Unit,
     onSubmit: (String, String, (Boolean) -> Unit) -> Unit
 ) {
     var submitting by remember { mutableStateOf(false) }
     var showFeedback by remember { mutableStateOf(false) }
     var showReject by remember { mutableStateOf(false) }
+
+    val scope = rememberCoroutineScope()
+    val projectId = item.projectId
+    var changes by remember(item.key) { mutableStateOf<RemoteChanges?>(null) }
+    var changesLoading by remember(item.key) { mutableStateOf(false) }
+    var changesError by remember(item.key) { mutableStateOf<String?>(null) }
+    var diff by remember(item.key) { mutableStateOf<RemoteDiff?>(null) }
+    var diffFailure by remember(item.key) { mutableStateOf<Pair<String, String>?>(null) }
+    var changesReload by remember(item.key) { mutableIntStateOf(0) }
+
+    LaunchedEffect(item.key, projectId, changesReload) {
+        if (projectId == null) return@LaunchedEffect
+        changesLoading = true
+        changesError = null
+        runCatching { vm.fetchChanges(item.connId, projectId) }
+            .onSuccess { changes = it }
+            .onFailure { changesError = it.message ?: "读取改动失败" }
+        changesLoading = false
+    }
 
     val answered = item.isAnswered && item.sentAt != null
     val sendError = item.answerError
@@ -212,15 +237,68 @@ private fun ReviewDetail(
                 }
             }
 
-            SectionTitle("更多")
-            AppCard {
+            if (projectId != null) {
                 Row(
-                    modifier = Modifier.padding(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 20.dp, bottom = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("完整说明、diff 与提交记录", fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "本次改动" + (changes?.let { c -> if (c.isRepo && c.files.isNotEmpty()) " · ${c.files.size} 个文件" else "" } ?: ""),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 0.6.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+                    )
                     Spacer(Modifier.weight(1f))
-                    Text("在桌面端查看", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                    if (!changesLoading) {
+                        Text(
+                            "刷新",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.clickable { changesReload++ }
+                        )
+                    }
+                }
+                if (changesError != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "读取改动失败：$changesError",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = { changesReload++ }) { Text("重试", fontSize = 12.sp) }
+                    }
+                }
+                val snapshot = changes
+                when {
+                    snapshot == null && changesLoading -> SmallLoading()
+                    snapshot == null -> Unit
+                    !snapshot.isRepo -> Hint("这个项目不是 git 仓库，看不到代码改动。")
+                    snapshot.files.isEmpty() -> Hint("工作区没有未提交的改动。")
+                    else -> snapshot.files.forEach { file ->
+                        FileRow(file) {
+                            scope.launch {
+                                runCatching { vm.fetchDiff(item.connId, projectId, file) }
+                                    .onSuccess { diff = it }
+                                    .onFailure { diffFailure = file.path to (it.message ?: "读取差异失败") }
+                            }
+                        }
+                    }
+                }
+            } else {
+                SectionTitle("更多")
+                AppCard {
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("完整说明与 diff", fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.weight(1f))
+                        Text("在桌面端查看", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                    }
                 }
             }
         }
@@ -268,6 +346,23 @@ private fun ReviewDetail(
                 Text(if (submitting) "提交中…" else "通过", fontWeight = FontWeight.SemiBold)
             }
         }
+    }
+
+    diff?.let { d ->
+        TextDialog(
+            title = d.path,
+            text = if (d.binary) "二进制文件，不显示内容" else d.text.ifBlank { "没有可显示的差异" },
+            footnote = if (d.truncated) "内容过长，已截断" else null,
+            onClose = { diff = null }
+        )
+    }
+    diffFailure?.let { (path, message) ->
+        TextDialog(
+            title = path,
+            text = message,
+            footnote = null,
+            onClose = { diffFailure = null }
+        )
     }
 
     if (showFeedback) {

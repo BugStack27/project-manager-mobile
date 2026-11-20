@@ -42,6 +42,8 @@ data class PendingItem(
     val requirementId: String,
     val seq: Int? = null,
     val title: String = "",
+    /** 桌面端下发：待审核页据此直接拉这个项目的改动与 diff；老版本没有这个字段 */
+    val projectId: String? = null,
     val projectName: String = "",
     val agent: String = "",
     val agentName: String = "",
@@ -202,6 +204,7 @@ fun RemoteTicket.toPendingItem(connId: String): PendingItem = PendingItem(
     requirementId = payload.requirementId,
     seq = payload.seq,
     title = payload.title,
+    projectId = payload.projectId,
     projectName = payload.projectName,
     agent = payload.agent,
     agentName = payload.agentName,

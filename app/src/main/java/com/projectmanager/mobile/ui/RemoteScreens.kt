@@ -629,7 +629,7 @@ private fun SmallButton(text: String, primary: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun TextDialog(title: String, text: String, footnote: String?, onClose: () -> Unit) {
+internal fun TextDialog(title: String, text: String, footnote: String?, onClose: () -> Unit) {
     Dialog(onDismissRequest = onClose) {
         Column(
             Modifier
@@ -723,12 +723,12 @@ private fun SectionTitle(text: String) {
 }
 
 @Composable
-private fun Hint(text: String) {
+internal fun Hint(text: String) {
     Text(text, fontSize = 12.5.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f))
 }
 
 @Composable
-private fun FileRow(file: RemoteChangeFile, onClick: () -> Unit) {
+internal fun FileRow(file: RemoteChangeFile, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -781,7 +781,7 @@ private fun LoadingRow() {
 }
 
 @Composable
-private fun SmallLoading() {
+internal fun SmallLoading() {
     Box(Modifier.fillMaxWidth().padding(14.dp), contentAlignment = Alignment.Center) {
         CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
     }

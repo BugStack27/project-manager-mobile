@@ -201,6 +201,7 @@ fun AppRoot(
                 ItemScreen(
                     item = item,
                     connectionName = connectionName,
+                    vm = remoteVm,
                     onBack = { navController.popBackStack() },
                     onSubmit = { decision, text, onResult ->
                         if (item == null) {

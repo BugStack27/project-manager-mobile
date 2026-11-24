@@ -403,12 +403,32 @@ fun RemoteRequirementScreen(
     projectName: String,
     projectId: String,
     requirement: RemoteRequirement?,
+    loading: Boolean,
+    loadError: String?,
+    requirementsLoaded: Boolean,
+    onRetry: () -> Unit,
     onBack: () -> Unit
 ) {
-    if (requirement == null) {
+    // 采纳 / 拒绝 / 回答之后列表会重载，期间按 id 暂时取不到这条需求：
+    // 先继续展示最后一次拿到的对象，等重载真正成功后再决定它是不是没了。
+    var lastRequirement by remember { mutableStateOf(requirement) }
+    LaunchedEffect(requirement) {
+        if (requirement != null) lastRequirement = requirement
+    }
+    val shown = requirement ?: lastRequirement
+
+    if (shown == null) {
         Column(Modifier.fillMaxSize()) {
             BackBar(title = "需求", onBack = onBack)
-            EmptyState("需求已不存在", "可能已被归档或删除。")
+            when {
+                loading || (!requirementsLoaded && loadError == null) -> LoadingRow()
+                loadError != null -> EmptyState(
+                    title = "读取需求失败",
+                    subtitle = loadError,
+                    action = { TextButton(onClick = onRetry) { Text("重试") } }
+                )
+                else -> EmptyState("需求已不存在", "可能已被归档或删除。")
+            }
         }
         return
     }
@@ -424,7 +444,7 @@ fun RemoteRequirementScreen(
     var answerDraft by remember { mutableStateOf("") }
     var submitting by remember { mutableStateOf(false) }
 
-    LaunchedEffect(requirement.id) {
+    LaunchedEffect(shown.id) {
         loadingExtra = true
         runCatching { vm.fetchChanges(connId, projectId) }.onSuccess { changes = it }
         runCatching { vm.fetchCommands(connId, projectId) }.onSuccess { commands = it }
@@ -432,7 +452,7 @@ fun RemoteRequirementScreen(
     }
 
     Column(Modifier.fillMaxSize()) {
-        BackBar(title = if (requirement.seq != null) "#${requirement.seq}" else "需求", onBack = onBack)
+        BackBar(title = if (shown.seq != null) "#${shown.seq}" else "需求", onBack = onBack)
 
         Column(
             Modifier
@@ -441,9 +461,9 @@ fun RemoteRequirementScreen(
                 .padding(horizontal = 16.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                StatusTag(requirement.statusLabel, requirement.status)
+                StatusTag(shown.statusLabel, shown.status)
                 Spacer(Modifier.width(8.dp))
-                if (requirement.source == "ai") Tag("AI 提出", MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.primary.copy(alpha = 0.14f))
+                if (shown.source == "ai") Tag("AI 提出", MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.primary.copy(alpha = 0.14f))
             }
             Spacer(Modifier.height(6.dp))
             Text(
@@ -451,28 +471,36 @@ fun RemoteRequirementScreen(
                 fontSize = 11.5.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
             )
+            if (requirement == null) {
+                // 这条需求刚从列表里消失：说清是刷新中还是刷新失败，别让人以为已经被删了
+                Spacer(Modifier.height(4.dp))
+                Hint(
+                    if (loadError != null) "刷新失败：$loadError。下面显示的是最后一次看到的内容。"
+                    else "正在刷新这条需求…"
+                )
+            }
             Spacer(Modifier.height(8.dp))
             Text(
-                requirement.title,
+                shown.title,
                 fontSize = 19.sp,
                 fontWeight = FontWeight.SemiBold,
                 lineHeight = 26.sp,
                 color = MaterialTheme.colorScheme.onSurface
             )
-            if (requirement.body.isNotBlank()) {
+            if (shown.body.isNotBlank()) {
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    requirement.body,
+                    shown.body,
                     fontSize = 13.sp,
                     lineHeight = 20.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            if (requirement.completion != null && requirement.completion.note.isNotBlank()) {
+            if (shown.completion != null && shown.completion.note.isNotBlank()) {
                 Spacer(Modifier.height(12.dp))
                 SectionTitle("交付说明")
                 Text(
-                    requirement.completion.note,
+                    shown.completion.note,
                     fontSize = 13.sp,
                     lineHeight = 20.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -482,15 +510,15 @@ fun RemoteRequirementScreen(
             /* ── 表态 ── */
             Spacer(Modifier.height(18.dp))
             RequirementActions(
-                req = requirement,
+                req = shown,
                 submitting = submitting,
                 answerDraft = answerDraft,
                 onDraftChange = { answerDraft = it },
                 onSubmit = { decision, text, qid ->
                     submitting = true
-                    vm.answer(connId, requirement.id, decision, text, qid) { submitting = false }
+                    vm.answer(connId, shown.id, decision, text, qid) { submitting = false }
                 },
-                onStatus = { status -> vm.setStatus(connId, requirement.id, status) },
+                onStatus = { status -> vm.setStatus(connId, shown.id, status) },
                 onFeedback = { textFor = "打回意见" }
             )
 
@@ -591,7 +619,7 @@ fun RemoteRequirementScreen(
             onConfirm = { text ->
                 textFor = null
                 submitting = true
-                vm.answer(connId, requirement.id, "feedback", text, null) { submitting = false }
+                vm.answer(connId, shown.id, "feedback", text, null) { submitting = false }
             }
         )
     }

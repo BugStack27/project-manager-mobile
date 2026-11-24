@@ -51,6 +51,8 @@ data class RemoteState(
     val desktops: List<RemoteDesktopState> = emptyList(),
     val requirements: List<RemoteRequirement> = emptyList(),
     val loading: Boolean = false,
+    /** 当前项目的需求列表成功加载过至少一次：用来区分「加载中 / 加载失败」与「真的没有了」 */
+    val requirementsLoaded: Boolean = false,
     val error: String? = null,
     val notice: String? = null
 ) {
@@ -189,17 +191,36 @@ class RemoteViewModel(private val app: PmApp) : ViewModel() {
         }
         val api = apiFor(connId)
         if (api == null) {
-            _state.update { it.copy(requirements = emptyList(), error = "还没拿到这台电脑的地址") }
+            _state.update {
+                it.copy(
+                    requirements = emptyList(),
+                    loading = false,
+                    requirementsLoaded = false,
+                    error = "还没拿到这台电脑的地址"
+                )
+            }
             return
         }
+        val switched = loadedConnId != connId || loadedProjectId != projectId
         loadedConnId = connId
         loadedProjectId = projectId
-        _state.update { it.copy(loading = true, error = null, requirements = emptyList()) }
+        // 同一项目重载（采纳 / 拒绝 / 回答之后）保留旧列表：详情页在刷新期间仍能按 id 取到需求，
+        // 不会先被清空而误报「需求已不存在」。只有换项目才清空，避免看到别的项目的需求。
+        _state.update {
+            it.copy(
+                loading = true,
+                error = null,
+                requirements = if (switched) emptyList() else it.requirements,
+                requirementsLoaded = if (switched) false else it.requirementsLoaded
+            )
+        }
         viewModelScope.launch {
             try {
                 val list = api.requirements(projectId)
                 if (loadedConnId == connId && loadedProjectId == projectId) {
-                    _state.update { it.copy(requirements = list, loading = false) }
+                    _state.update {
+                        it.copy(requirements = list, loading = false, requirementsLoaded = true, error = null)
+                    }
                 }
             } catch (e: Exception) {
                 if (loadedConnId == connId && loadedProjectId == projectId) {

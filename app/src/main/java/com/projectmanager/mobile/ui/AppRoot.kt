@@ -263,6 +263,10 @@ fun AppRoot(
                     projectName = project?.name.orEmpty(),
                     projectId = projectId,
                     requirement = remoteState.requirements.firstOrNull { it.id == rid },
+                    loading = remoteState.loading,
+                    loadError = remoteState.error,
+                    requirementsLoaded = remoteState.requirementsLoaded,
+                    onRetry = { remoteVm.loadRequirements(connId, projectId, force = true) },
                     onBack = { navController.popBackStack() }
                 )
             }

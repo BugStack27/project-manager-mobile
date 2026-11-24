@@ -21,7 +21,7 @@ android {
         targetSdk = 34
         // CI 按 tag 传入 -PversionCode；不传时用默认值
         versionCode = (findProperty("versionCode") as String?)?.toInt() ?: 1
-        versionName = "0.0.3"
+        versionName = "0.0.4"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

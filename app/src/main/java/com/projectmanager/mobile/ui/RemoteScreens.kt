@@ -1,16 +1,20 @@
 package com.projectmanager.mobile.ui
 
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -26,13 +30,16 @@ import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -43,12 +50,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import kotlin.math.roundToInt
 import com.projectmanager.mobile.data.ItemKind
 import com.projectmanager.mobile.data.PendingItem
 import com.projectmanager.mobile.data.RemoteChangeFile
@@ -593,7 +603,7 @@ fun RemoteRequirementScreen(
     }
 
     if (diff != null) {
-        TextDialog(
+        DiffSheet(
             title = diff!!.path,
             text = if (diff!!.binary) "二进制文件，不显示内容" else diff!!.text.ifBlank { "没有可显示的差异" },
             footnote = if (diff!!.truncated) "内容过长，已截断" else null,
@@ -744,6 +754,97 @@ internal fun TextDialog(title: String, text: String, footnote: String?, onClose:
                 TextButton(onClick = onClose) { Text("关闭") }
             }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun DiffSheet(title: String, text: String, footnote: String?, onClose: () -> Unit) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onClose,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.92f)
+                .padding(horizontal = 16.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    title,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(Modifier.width(8.dp))
+                TextButton(onClick = onClose) { Text("关闭") }
+            }
+            Spacer(Modifier.height(8.dp))
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(12.dp))
+            ) {
+                val scrollState = rememberScrollState()
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .verticalScroll(scrollState)
+                        .padding(start = 12.dp, top = 12.dp, end = 16.dp, bottom = 12.dp)
+                ) {
+                    SelectionContainer {
+                        Text(
+                            text,
+                            fontSize = 11.sp,
+                            lineHeight = 16.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+                VerticalScrollBar(
+                    scrollState = scrollState,
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .fillMaxHeight()
+                        .padding(vertical = 8.dp, horizontal = 4.dp)
+                )
+            }
+            if (footnote != null) {
+                Spacer(Modifier.height(8.dp))
+                Text(footnote, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+    }
+}
+
+/** 抽屉里没有系统滚动条，按滚动进度画一条，内容超出一屏时才出现。 */
+@Composable
+private fun VerticalScrollBar(scrollState: ScrollState, modifier: Modifier = Modifier) {
+    val max = scrollState.maxValue
+    if (max <= 0) return
+    BoxWithConstraints(modifier.width(4.dp)) {
+        val viewport = constraints.maxHeight.toFloat()
+        if (viewport <= 0f) return@BoxWithConstraints
+        val thumbPx = (viewport * viewport / (viewport + max)).coerceIn(24f, viewport)
+        val offsetPx = if (viewport > thumbPx) scrollState.value.toFloat() / max * (viewport - thumbPx) else 0f
+        Box(
+            Modifier
+                .offset { IntOffset(0, offsetPx.roundToInt()) }
+                .fillMaxWidth()
+                .height(with(LocalDensity.current) { thumbPx.toDp() })
+                .background(
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
+                    RoundedCornerShape(2.dp)
+                )
+        )
     }
 }
 

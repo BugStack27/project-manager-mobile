@@ -349,7 +349,7 @@ private fun ReviewDetail(
     }
 
     diff?.let { d ->
-        TextDialog(
+        DiffSheet(
             title = d.path,
             text = if (d.binary) "二进制文件，不显示内容" else d.text.ifBlank { "没有可显示的差异" },
             footnote = if (d.truncated) "内容过长，已截断" else null,

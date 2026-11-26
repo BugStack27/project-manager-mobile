@@ -230,12 +230,14 @@ fun AppRoot(
                 val projectId = entry.arguments?.getString("projectId").orEmpty()
                 val desktop = remoteState.desktops.firstOrNull { it.connectionId == connId }
                 val project = desktop?.projects?.firstOrNull { it.id == projectId }
-                LaunchedEffect(connId, projectId) { remoteVm.loadRequirements(connId, projectId) }
+                // 每次进入都强制重拉：桌面端新交付 / 状态变化不会主动推到手机上
+                LaunchedEffect(connId, projectId) { remoteVm.loadRequirements(connId, projectId, force = true) }
                 RemoteRequirementsScreen(
                     state = remoteState,
                     desktopName = desktop?.connectionName.orEmpty(),
                     projectName = project?.name.orEmpty(),
                     onBack = { navController.popBackStack() },
+                    onRefresh = { remoteVm.loadRequirements(connId, projectId, force = true) },
                     onOpenRequirement = { requirement ->
                         navController.navigate(
                             "remote/p/${Uri.encode(connId)}/${Uri.encode(projectId)}/r/${Uri.encode(requirement.id)}"

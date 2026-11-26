@@ -302,12 +302,33 @@ fun RemoteRequirementsScreen(
     desktopName: String,
     projectName: String,
     onBack: () -> Unit,
+    onRefresh: () -> Unit,
     onOpenRequirement: (RemoteRequirement) -> Unit,
     onAdopt: (RemoteRequirement) -> Unit,
     onReject: (RemoteRequirement) -> Unit
 ) {
     Column(Modifier.fillMaxSize()) {
-        BackBar(title = projectName.ifBlank { "需求" }, onBack = onBack)
+        BackBar(
+            title = projectName.ifBlank { "需求" },
+            onBack = onBack,
+            actions = {
+                IconButton(onClick = onRefresh, enabled = !state.loading) {
+                    if (state.loading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Icon(
+                            Icons.Outlined.Refresh,
+                            contentDescription = "刷新需求",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        )
         if (desktopName.isNotBlank()) {
             Row(
                 modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 4.dp),
@@ -333,18 +354,29 @@ fun RemoteRequirementsScreen(
                 title = state.error ?: "还没有需求",
                 subtitle = if (state.error != null) state.error else "这个项目下暂无需求。"
             )
-            else -> LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(state.requirements, key = { it.id }) { req ->
-                    RequirementCard(
-                        req = req,
-                        onClick = { onOpenRequirement(req) },
-                        onAdopt = { onAdopt(req) },
-                        onReject = { onReject(req) }
+            else -> Column(Modifier.fillMaxSize()) {
+                // 刷新失败时旧列表仍然可用，但要说明看到的可能不是最新状态
+                if (state.error != null) {
+                    Text(
+                        "刷新失败：${state.error}",
+                        fontSize = 11.5.sp,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
                     )
+                }
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(state.requirements, key = { it.id }) { req ->
+                        RequirementCard(
+                            req = req,
+                            onClick = { onOpenRequirement(req) },
+                            onAdopt = { onAdopt(req) },
+                            onReject = { onReject(req) }
+                        )
+                    }
                 }
             }
         }

@@ -76,3 +76,7 @@ fun successTint(): Color = successColor().copy(alpha = if (isSystemInDarkTheme()
 
 @Composable
 fun warningTint(): Color = warningColor().copy(alpha = if (isSystemInDarkTheme()) 0.20f else 0.14f)
+
+@Composable
+fun errorTint(): Color =
+    MaterialTheme.colorScheme.error.copy(alpha = if (isSystemInDarkTheme()) 0.20f else 0.14f)

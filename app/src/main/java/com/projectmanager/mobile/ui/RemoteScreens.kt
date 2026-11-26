@@ -53,9 +53,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -794,6 +798,7 @@ fun RemoteRequirementScreen(
             title = diff!!.path,
             text = if (diff!!.binary) "二进制文件，不显示内容" else diff!!.text.ifBlank { "没有可显示的差异" },
             footnote = if (diff!!.truncated) "内容过长，已截断" else null,
+            isDiff = !diff!!.binary && !diff!!.untracked && diff!!.text.isNotBlank(),
             onClose = { diff = null }
         )
     }
@@ -946,8 +951,19 @@ internal fun TextDialog(title: String, text: String, footnote: String?, onClose:
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun DiffSheet(title: String, text: String, footnote: String?, onClose: () -> Unit) {
+internal fun DiffSheet(
+    title: String,
+    text: String,
+    footnote: String?,
+    isDiff: Boolean = false,
+    onClose: () -> Unit
+) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val addedTint = successTint()
+    val removedTint = errorTint()
+    val body = remember(text, isDiff, addedTint, removedTint) {
+        highlightDiff(text, isDiff, addedTint, removedTint)
+    }
     ModalBottomSheet(
         onDismissRequest = onClose,
         sheetState = sheetState,
@@ -987,7 +1003,7 @@ internal fun DiffSheet(title: String, text: String, footnote: String?, onClose: 
                 ) {
                     SelectionContainer {
                         Text(
-                            text,
+                            body,
                             fontSize = 11.sp,
                             lineHeight = 16.sp,
                             fontFamily = FontFamily.Monospace,
@@ -1008,6 +1024,33 @@ internal fun DiffSheet(title: String, text: String, footnote: String?, onClose: 
                 Text(footnote, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Spacer(Modifier.height(12.dp))
+        }
+    }
+}
+
+/** 按行给 unified diff 上色：新增绿底、删除红底，文件头与 hunk 头保持原样。 */
+private fun highlightDiff(
+    text: String,
+    isDiff: Boolean,
+    addedTint: Color,
+    removedTint: Color
+): AnnotatedString {
+    if (!isDiff) return AnnotatedString(text)
+    val lines = text.split('\n')
+    return buildAnnotatedString {
+        lines.forEachIndexed { index, line ->
+            val tint = when {
+                line.startsWith("+++") || line.startsWith("---") -> null
+                line.startsWith("+") -> addedTint
+                line.startsWith("-") -> removedTint
+                else -> null
+            }
+            if (tint == null) {
+                append(line)
+            } else {
+                withStyle(SpanStyle(background = tint)) { append(line) }
+            }
+            if (index != lines.lastIndex) append('\n')
         }
     }
 }

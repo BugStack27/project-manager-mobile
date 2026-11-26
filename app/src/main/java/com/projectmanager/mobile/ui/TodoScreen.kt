@@ -227,7 +227,7 @@ private fun ConnectionStatusItem(name: String, runtime: ConnectionRuntime?) {
 }
 
 @Composable
-private fun chipColors() = FilterChipDefaults.filterChipColors(
+internal fun chipColors() = FilterChipDefaults.filterChipColors(
     selectedContainerColor = MaterialTheme.colorScheme.onBackground,
     selectedLabelColor = MaterialTheme.colorScheme.background,
     containerColor = Color.Transparent,

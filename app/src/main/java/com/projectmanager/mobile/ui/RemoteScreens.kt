@@ -31,6 +31,7 @@ import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -46,6 +47,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -82,8 +84,19 @@ fun RemoteProjectsScreen(
     state: RemoteState,
     pendingItems: List<PendingItem>,
     onRefresh: () -> Unit,
-    onOpenProject: (RemoteProjectEntry) -> Unit
+    onOpenProject: (RemoteProjectEntry) -> Unit,
+    onLoadUnfinished: () -> Unit,
+    onOpenUnfinished: (RemoteUnfinishedEntry) -> Unit
 ) {
+    var showUnfinished by rememberSaveable { mutableStateOf(false) }
+    // 进「未完成」就重拉一次：需求状态在桌面端变，手机上没有推送
+    LaunchedEffect(showUnfinished) {
+        if (showUnfinished) onLoadUnfinished()
+    }
+    val unfinishedProjects = state.unfinished
+        .map { "${it.connectionId}|${it.projectId}" }
+        .distinct()
+        .size
     Column(
         Modifier
             .fillMaxSize()
@@ -94,6 +107,11 @@ fun RemoteProjectsScreen(
             subtitle = when {
                 state.desktops.isEmpty() -> "等你完成配对"
                 !state.ready -> "等待桌面端地址"
+                showUnfinished -> when {
+                    state.unfinishedError != null && state.unfinished.isEmpty() -> "读取未完成需求失败"
+                    !state.unfinishedLoaded || state.unfinishedLoading -> "正在读取未完成需求"
+                    else -> "${state.unfinished.size} 条未完成 · $unfinishedProjects 个项目"
+                }
                 state.desktops.size == 1 -> {
                     val desktop = state.desktops.first()
                     "${desktop.connectionName} · ${desktop.status}"
@@ -102,22 +120,60 @@ fun RemoteProjectsScreen(
             },
             subtitleColor = when {
                 state.desktops.isEmpty() || !state.ready -> MaterialTheme.colorScheme.onSurfaceVariant
+                showUnfinished -> when {
+                    state.unfinishedError != null && state.unfinished.isEmpty() -> MaterialTheme.colorScheme.error
+                    !state.unfinishedLoaded || state.unfinishedLoading -> MaterialTheme.colorScheme.onSurfaceVariant
+                    else -> MaterialTheme.colorScheme.primary
+                }
                 state.online -> MaterialTheme.colorScheme.primary
                 else -> MaterialTheme.colorScheme.error
             },
             actions = {
                 if (state.ready) {
-                    IconButton(onClick = onRefresh) {
+                    IconButton(onClick = { if (showUnfinished) onLoadUnfinished() else onRefresh() }) {
                         Icon(Icons.Outlined.Refresh, contentDescription = "刷新", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
         )
 
+        if (state.desktops.isNotEmpty()) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FilterChip(
+                    selected = !showUnfinished,
+                    onClick = { showUnfinished = false },
+                    label = { Text("项目 ${state.projectCount}", fontSize = 12.5.sp) },
+                    shape = RoundedCornerShape(999.dp),
+                    colors = chipColors()
+                )
+                FilterChip(
+                    selected = showUnfinished,
+                    onClick = { showUnfinished = true },
+                    label = {
+                        Text(
+                            if (state.unfinishedLoaded) "未完成 ${state.unfinished.size}" else "未完成",
+                            fontSize = 12.5.sp
+                        )
+                    },
+                    shape = RoundedCornerShape(999.dp),
+                    colors = chipColors()
+                )
+            }
+        }
+
         when {
             state.desktops.isEmpty() -> EmptyState(
                 title = "还没有连接桌面端",
                 subtitle = "先在「连接」里扫码配对；每台电脑的项目会分开显示，并标注来自哪台机器。"
+            )
+
+            showUnfinished -> RemoteUnfinishedList(
+                state = state,
+                onRetry = onLoadUnfinished,
+                onOpen = onOpenUnfinished
             )
 
             else -> LazyColumn(
@@ -176,6 +232,105 @@ fun RemoteProjectsScreen(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/** 跨项目的未完成需求：加载 / 部分失败 / 空 / 列表四种状态 */
+@Composable
+private fun RemoteUnfinishedList(
+    state: RemoteState,
+    onRetry: () -> Unit,
+    onOpen: (RemoteUnfinishedEntry) -> Unit
+) {
+    val items = state.unfinished
+    if (!state.ready) {
+        EmptyState(
+            title = "还没拿到远程地址",
+            subtitle = "桌面端开启手机端通信后会自动同步；拿到地址后这里就能列出未完成的需求。"
+        )
+        return
+    }
+    when {
+        items.isEmpty() && (state.unfinishedLoading || !state.unfinishedLoaded) -> LoadingRow()
+        items.isEmpty() && state.unfinishedError != null -> EmptyState(
+            title = "读取未完成需求失败",
+            subtitle = state.unfinishedError,
+            action = { TextButton(onClick = onRetry) { Text("重试") } }
+        )
+        items.isEmpty() -> EmptyState(
+            title = "没有未完成的任务",
+            subtitle = "所有需求都已处理完；有新任务后会在这里出现。"
+        )
+        else -> LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            if (state.unfinishedError != null) {
+                item(key = "unfinished-error") {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "部分项目读取失败：${state.unfinishedError}",
+                            fontSize = 11.5.sp,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = onRetry) { Text("重试", fontSize = 12.sp) }
+                    }
+                }
+            }
+            items(items, key = { "${it.connectionId}|${it.requirement.id}" }) { entry ->
+                UnfinishedCard(entry) { onOpen(entry) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun UnfinishedCard(entry: RemoteUnfinishedEntry, onClick: () -> Unit) {
+    val req = entry.requirement
+    AppCard(modifier = Modifier.clickable(onClick = onClick)) {
+        Column(Modifier.padding(horizontal = 13.dp, vertical = 12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                StatusTag(req.statusLabel, req.status)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    if (req.seq != null) "#${req.seq}" else "",
+                    fontSize = 11.5.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.weight(1f))
+                if (req.questions.isNotEmpty()) {
+                    Tag("${req.questions.size} 个提问", warningColor(), warningTint())
+                }
+            }
+            Spacer(Modifier.height(7.dp))
+            Text(
+                req.title.ifBlank { "（无标题）" },
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "${entry.connectionName} · ${entry.projectName}",
+                    fontSize = 11.5.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                Icon(
+                    Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    modifier = Modifier.size(16.dp)
+                )
             }
         }
     }

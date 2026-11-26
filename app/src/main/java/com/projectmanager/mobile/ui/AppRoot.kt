@@ -222,6 +222,12 @@ fun AppRoot(
                         navController.navigate(
                             "remote/p/${Uri.encode(entry.connectionId)}/${Uri.encode(entry.project.id)}"
                         )
+                    },
+                    onLoadUnfinished = remoteVm::loadUnfinished,
+                    onOpenUnfinished = { entry ->
+                        navController.navigate(
+                            "remote/p/${Uri.encode(entry.connectionId)}/${Uri.encode(entry.projectId)}/r/${Uri.encode(entry.requirement.id)}"
+                        )
                     }
                 )
             }

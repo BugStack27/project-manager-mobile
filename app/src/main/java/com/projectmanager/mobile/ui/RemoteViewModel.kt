@@ -16,6 +16,9 @@ import com.projectmanager.mobile.data.RemoteDiff
 import com.projectmanager.mobile.data.RemoteLogs
 import com.projectmanager.mobile.data.RemoteProject
 import com.projectmanager.mobile.data.RemoteRequirement
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -47,6 +50,15 @@ data class RemoteDesktopState(
     val error: String? = null
 )
 
+/** 跨项目的未完成需求：带上所属电脑与项目，列表里直接说明来源 */
+data class RemoteUnfinishedEntry(
+    val connectionId: String,
+    val connectionName: String,
+    val projectId: String,
+    val projectName: String,
+    val requirement: RemoteRequirement
+)
+
 data class RemoteState(
     val desktops: List<RemoteDesktopState> = emptyList(),
     val requirements: List<RemoteRequirement> = emptyList(),
@@ -54,7 +66,12 @@ data class RemoteState(
     /** 当前项目的需求列表成功加载过至少一次：用来区分「加载中 / 加载失败」与「真的没有了」 */
     val requirementsLoaded: Boolean = false,
     val error: String? = null,
-    val notice: String? = null
+    val notice: String? = null,
+    /** 跨项目的未完成需求（未开始 / 进行中 / 待审核），进「未完成」视图时按需拉取 */
+    val unfinished: List<RemoteUnfinishedEntry> = emptyList(),
+    val unfinishedLoading: Boolean = false,
+    val unfinishedLoaded: Boolean = false,
+    val unfinishedError: String? = null
 ) {
     /** 至少有一台电脑已经拿到接入点 */
     val ready: Boolean get() = desktops.any { it.ready }
@@ -128,7 +145,13 @@ class RemoteViewModel(private val app: PmApp) : ViewModel() {
                 }
             )
         }
-        _state.update { it.copy(desktops = next) }
+        _state.update {
+            val liveIds = connections.map { conn -> conn.id }.toSet()
+            it.copy(
+                desktops = next,
+                unfinished = it.unfinished.filter { entry -> entry.connectionId in liveIds }
+            )
+        }
         for (conn in connections) {
             if (conn.remote.ready) loadProjects(conn) else loadedConfigs.remove(conn.id)
         }
@@ -136,6 +159,79 @@ class RemoteViewModel(private val app: PmApp) : ViewModel() {
 
     fun refresh() {
         repo.connections.forEach { loadProjects(it, force = true) }
+    }
+
+    /**
+     * 拉取所有电脑、所有项目的未完成需求（`pending=1`，即未开始 / 进行中 / 待审核）。
+     *
+     * 每台电脑一个协程并行，项目之间串行：项目多时请求数就是项目数，但不会把一条隧道打满。
+     * 单个项目失败只记为这台电脑的部分失败，其余结果照常展示 —— 「看不到全部」比「一个失败就整页空白」有用。
+     */
+    fun loadUnfinished() {
+        if (_state.value.unfinishedLoading) return
+        val desktops = _state.value.desktops.filter { it.ready }
+        if (desktops.isEmpty()) {
+            _state.update {
+                it.copy(
+                    unfinished = emptyList(),
+                    unfinishedLoading = false,
+                    unfinishedLoaded = false,
+                    unfinishedError = null
+                )
+            }
+            return
+        }
+        _state.update { it.copy(unfinishedLoading = true, unfinishedError = null) }
+        viewModelScope.launch {
+            val results = coroutineScope {
+                desktops.map { desktop -> async { fetchUnfinished(desktop) } }.awaitAll()
+            }
+            val entries = results.flatMap { it.entries }
+                .distinctBy { "${it.connectionId}|${it.requirement.id}" }
+            val errors = results.mapNotNull { it.error }
+            _state.update {
+                it.copy(
+                    unfinished = sortedUnfinished(entries),
+                    unfinishedLoading = false,
+                    unfinishedLoaded = true,
+                    unfinishedError = errors.takeIf { list -> list.isNotEmpty() }?.joinToString("；")
+                )
+            }
+        }
+    }
+
+    private class DesktopUnfinished(
+        val entries: List<RemoteUnfinishedEntry>,
+        val error: String?
+    )
+
+    private suspend fun fetchUnfinished(desktop: RemoteDesktopState): DesktopUnfinished {
+        val api = apiFor(desktop.connectionId)
+            ?: return DesktopUnfinished(emptyList(), "${desktop.connectionName}：还没拿到远程地址")
+        if (desktop.projects.isEmpty()) {
+            return DesktopUnfinished(emptyList(), "${desktop.connectionName}：项目列表还没加载")
+        }
+        val entries = mutableListOf<RemoteUnfinishedEntry>()
+        var failed = 0
+        var firstMessage = ""
+        for (project in desktop.projects) {
+            try {
+                api.requirements(project.id, pendingOnly = true).forEach { req ->
+                    entries += RemoteUnfinishedEntry(
+                        connectionId = desktop.connectionId,
+                        connectionName = desktop.connectionName,
+                        projectId = project.id,
+                        projectName = project.name.ifBlank { "未命名项目" },
+                        requirement = req
+                    )
+                }
+            } catch (e: Exception) {
+                failed++
+                if (firstMessage.isBlank()) firstMessage = e.message ?: "读取失败"
+            }
+        }
+        val error = if (failed == 0) null else "${desktop.connectionName}：$failed 个项目读取失败（$firstMessage）"
+        return DesktopUnfinished(entries, error)
     }
 
     fun consumeNotice() {
@@ -307,4 +403,17 @@ class RemoteViewModel(private val app: PmApp) : ViewModel() {
             override fun <T : ViewModel> create(modelClass: Class<T>): T = RemoteViewModel(app) as T
         }
     }
+}
+
+/**
+ * 未完成需求的展示顺序：待审核最靠前（停在用户手上），其次进行中，最后未开始；
+ * 同档按项目名、编号倒序，跨项目时也有稳定顺序。
+ */
+internal fun sortedUnfinished(entries: List<RemoteUnfinishedEntry>): List<RemoteUnfinishedEntry> {
+    val rank = mapOf("review" to 0, "doing" to 1, "todo" to 2)
+    return entries.sortedWith(
+        compareBy<RemoteUnfinishedEntry> { rank[it.requirement.status] ?: 3 }
+            .thenBy { it.projectName }
+            .thenByDescending { it.requirement.seq ?: 0 }
+    )
 }
